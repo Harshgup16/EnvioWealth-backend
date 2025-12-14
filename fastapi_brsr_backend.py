@@ -212,7 +212,7 @@ def repair_json(text: str) -> str:
 def get_extraction_chunks() -> List[Dict[str, Any]]:
     """
     Define extraction chunks with prompts based on BRSR Field Guidance.
-    Reorganized: 1 chunk for Section A, 1 for Section B, 4 for Section C (Principles 1-9)
+    Reorganized: 1 chunk for Section A, 1 for Section B, 3 for Section C (Principles 1-9)
     """
     return [
         {
@@ -240,18 +240,26 @@ CRITICAL: Return ONLY a valid JSON object. No markdown code blocks (```json), no
     "contactPhone": "",
     "contactEmail": "",
     "reportingBoundary": "",
+    "assuranceProvider": "",
+    "assuranceType": "",
     "businessActivities": [{"mainActivity": "", "businessDescription": "", "turnoverPercent": ""}],
     "products": [{"name": "", "nicCode": "", "turnoverPercent": ""}],
-    "locations": {"national": {"plants": "", "offices": ""}, "international": {"plants": "", "offices": ""}},
-    "marketsServed": {"national": "", "international": ""},
-    "customers": [],
-    "employees": {"permanent": {"male": 0, "female": 0, "total": 0}, "other": {"male": 0, "female": 0, "total": 0}},
-    "workers": {"permanent": {"male": 0, "female": 0, "total": 0}, "other": {"male": 0, "female": 0, "total": 0}},
-    "participationDiversityArea": {"board": {"total": 0, "female": 0, "percent": ""}, "kmp": {"total": 0, "female": 0, "percent": ""}},
-    "turnover": {"employees": {"permanent": {"male": {"current": "", "previous": ""}, "female": {"current": "", "previous": ""}, "total": {"current": "", "previous": ""}}, "other": {"male": {"current": "", "previous": ""}, "female": {"current": "", "previous": ""}, "total": {"current": "", "previous": ""}}}, "workers": {"permanent": {"male": {"current": "", "previous": ""}, "female": {"current": "", "previous": ""}, "total": {"current": "", "previous": ""}}, "other": {"male": {"current": "", "previous": ""}, "female": {"current": "", "previous": ""}, "total": {"current": "", "previous": ""}}}},
-    "holdingSubsidiary": {"hasParticipation": "", "details": []},
-    "csrDetails": {"csrRegistrationNumber": "", "csrProjectDetails": ""},
-    "transparencyDisclosures": {"complaintsStakeholders": "", "penaltiesEnvironment": "", "appealsPending": ""}
+    "nationalPlants": "",
+    "nationalOffices": "",
+    "internationalPlants": "",
+    "internationalOffices": "",
+    "nationalStates": "",
+    "internationalCountries": "",
+    "exportContribution": "",
+    "employees": {"permanent": {"male": 0, "female": 0, "total": 0}, "otherThanPermanent": {"male": 0, "female": 0, "total": 0}},
+    "workers": {"permanent": {"male": 0, "female": 0, "total": 0}, "otherThanPermanent": {"male": 0, "female": 0, "total": 0}},
+    "board": {"total": 0, "female": 0, "femalePercent": ""},
+    "kmp": {"total": 0, "female": 0, "femalePercent": ""},
+    "turnover": {"employees": {"male": "", "female": "", "total": ""}, "workers": {"male": "", "female": "", "total": ""}},
+    "subsidiaries": "",
+    "csr": {"prescribedAmount": "", "amountSpent": "", "surplus": ""},
+    "complaints": {"communities": {"filed": 0, "pending": 0, "remarks": ""}, "investors": {"filed": 0, "pending": 0, "remarks": ""}, "shareholders": {"filed": 0, "pending": 0, "remarks": ""}, "employees": {"filed": 0, "pending": 0, "remarks": ""}, "customers": {"filed": 0, "pending": 0, "remarks": ""}, "valueChain": {"filed": 0, "pending": 0, "remarks": ""}},
+    "materialIssues": [{"issue": "", "type": "", "rationale": "", "approach": "", "financialImplications": ""}]
 }"""
         },
         {
@@ -263,62 +271,430 @@ CRITICAL: Return ONLY a valid JSON object. No markdown code blocks (```json), no
 CRITICAL: Return ONLY valid JSON. No markdown, no explanations.
 
 {
-    "policies": {
-        "p1": {"exists": "", "weblink": "", "approved": ""},
-        "p2": {"exists": "", "weblink": "", "approved": ""},
-        "p3": {"exists": "", "weblink": "", "approved": ""},
-        "p4": {"exists": "", "weblink": "", "approved": ""},
-        "p5": {"exists": "", "weblink": "", "approved": ""},
-        "p6": {"exists": "", "weblink": "", "approved": ""},
-        "p7": {"exists": "", "weblink": "", "approved": ""},
-        "p8": {"exists": "", "weblink": "", "approved": ""},
-        "p9": {"exists": "", "weblink": "", "approved": ""}
+    "policyMatrix": {
+        "p1": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""},
+        "p2": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""},
+        "p3": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""},
+        "p4": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""},
+        "p5": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""},
+        "p6": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""},
+        "p7": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""},
+        "p8": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""},
+        "p9": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""}
     },
-    "governance": {"committeeDetails": "", "performanceReview": "", "grievanceRedressal": "", "frequencyReview": "", "chiefResponsibility": "", "weblink": ""}
+    "governance": {
+        "directorStatement": "",
+        "frequencyReview": "",
+        "chiefResponsibility": "",
+        "weblink": ""
+    }
 }"""
         },
         {
-            "id": "sectionC_p1_p2_p3",
-            "name": "Section C: Principles 1-3",
+            "id": "sectionC_p1_p2",
+            "name": "Section C: Principles 1-2",
             "delay_seconds": 10,
-            "prompt": """Extract Section C for ONLY Principles 1, 2, and 3.
+            "prompt": """Extract Section C Principles 1 and 2 with detailed structure.
 
 CRITICAL: Return ONLY valid JSON. No markdown, no explanations.
 
 {
-    "principle1": {"essential": {"trainingCoverage": "", "codeOfConduct": "", "conflictDisclosure": "", "complaintsMechanism": ""}},
-    "principle2": {"essential": {"productLifecycle": "", "sustainableSourcing": "", "recycledInputs": "", "eprCompliance": ""}},
-    "principle3": {"essential": {"employeeWellbeing": "", "safetyIncidents": "", "workingConditions": "", "healthInsurance": "", "safetyTraining": ""}}
+    "principle1": {
+        "essential": {
+            "q1_percentageCoveredByTraining": {
+                "boardOfDirectors": {"totalProgrammes": "", "topicsCovered": "", "percentageCovered": ""},
+                "kmp": {"totalProgrammes": "", "topicsCovered": "", "percentageCovered": ""},
+                "employees": {"totalProgrammes": "", "topicsCovered": "", "percentageCovered": ""},
+                "workers": {"totalProgrammes": "", "topicsCovered": "", "percentageCovered": ""}
+            },
+            "q2_finesPenalties": {"monetary": [], "nonMonetary": []},
+            "q3_appealsOutstanding": "",
+            "q4_antiCorruptionPolicy": {"exists": "", "details": "", "webLink": ""},
+            "q5_disciplinaryActions": {"directors": {"currentFY": "", "previousFY": ""}, "kmps": {"currentFY": "", "previousFY": ""}, "employees": {"currentFY": "", "previousFY": ""}, "workers": {"currentFY": "", "previousFY": ""}},
+            "q6_conflictOfInterestComplaints": {},
+            "q7_correctiveActions": "",
+            "q8_accountsPayableDays": {"currentFY": "", "previousFY": ""},
+            "q9_opennessBusiness": {}
+        },
+        "leadership": {
+            "q1_valueChainAwareness": [],
+            "q2_conflictOfInterestProcess": {"exists": "", "details": ""}
+        }
+    },
+    "principle2": {
+        "essential": {
+            "q1_rdCapexInvestments": {"rd": {"currentFY": "", "previousFY": "", "improvementDetails": ""}, "capex": {"currentFY": "", "previousFY": "", "improvementDetails": ""}},
+            "q2_sustainableSourcing": {"proceduresInPlace": "", "percentageSustainablySourced": ""},
+            "q3_reclaimProcesses": {"plastics": {"applicable": "", "process": ""}, "eWaste": {"applicable": "", "process": ""}, "hazardousWaste": {"applicable": "", "process": ""}, "otherWaste": {"applicable": "", "process": ""}},
+            "q4_epr": {"applicable": "", "wasteCollectionPlanInLine": ""}
+        },
+        "leadership": {
+            "q1_lcaDetails": "",
+            "q2_significantConcerns": "",
+            "q3_recycledInputMaterial": [],
+            "q4_productsReclaimed": {},
+            "q5_reclaimedPercentage": ""
+        }
+    }
 }"""
         },
         {
-            "id": "sectionC_p4_p5_p6",
-            "name": "Section C: Principles 4-6",
+            "id": "sectionC_p3",
+            "name": "Section C: Principle 3 (Employee & Worker Wellbeing)",
             "delay_seconds": 10,
-            "prompt": """Extract Section C for ONLY Principles 4, 5, and 6.
+            "prompt": """Extract Section C Principle 3 with complete wellbeing and safety details.
+
+CRITICAL: Return ONLY valid JSON matching the exact structure below. Fill in actual data from the document.
+
+{
+    "principle3": {
+        "essential": {
+            "q1a_employeeWellbeing": {
+                "permanentMale": { 
+                    "total": "number as string",
+                    "healthInsurance": { "no": "count", "percent": "XX%" },
+                    "accidentInsurance": { "no": "count", "percent": "XX%" },
+                    "maternityBenefits": { "no": "NA or count", "percent": "NA or XX%" },
+                    "paternityBenefits": { "no": "NA or count", "percent": "NA or XX%" },
+                    "dayCare": { "no": "NA or count", "percent": "NA or XX%" }
+                },
+                "permanentFemale": { 
+                    "total": "",
+                    "healthInsurance": { "no": "", "percent": "" },
+                    "accidentInsurance": { "no": "", "percent": "" },
+                    "maternityBenefits": { "no": "", "percent": "" },
+                    "paternityBenefits": { "no": "", "percent": "" },
+                    "dayCare": { "no": "", "percent": "" }
+                },
+                "permanentTotal": { 
+                    "total": "",
+                    "healthInsurance": { "no": "", "percent": "" },
+                    "accidentInsurance": { "no": "", "percent": "" },
+                    "maternityBenefits": { "no": "", "percent": "" },
+                    "paternityBenefits": { "no": "", "percent": "" },
+                    "dayCare": { "no": "", "percent": "" }
+                },
+                "otherMale": "fill same structure or 'Not Applicable'",
+                "otherFemale": "fill same structure or 'Not Applicable'",
+                "otherTotal": "fill same structure or 'Not Applicable'"
+            },
+            "q1b_workerWellbeing": {
+                "permanentMale": { "total": "", "healthInsurance": { "no": "", "percent": "" }, "accidentInsurance": { "no": "", "percent": "" }, "maternityBenefits": { "no": "", "percent": "" }, "paternityBenefits": { "no": "", "percent": "" }, "dayCare": { "no": "", "percent": "" } },
+                "permanentFemale": { "total": "", "healthInsurance": { "no": "", "percent": "" }, "accidentInsurance": { "no": "", "percent": "" }, "maternityBenefits": { "no": "", "percent": "" }, "paternityBenefits": { "no": "", "percent": "" }, "dayCare": { "no": "", "percent": "" } },
+                "permanentTotal": { "total": "", "healthInsurance": { "no": "", "percent": "" }, "accidentInsurance": { "no": "", "percent": "" }, "maternityBenefits": { "no": "", "percent": "" }, "paternityBenefits": { "no": "", "percent": "" }, "dayCare": { "no": "", "percent": "" } },
+                "otherMale": { "total": "", "healthInsurance": { "no": "", "percent": "" }, "accidentInsurance": { "no": "", "percent": "" }, "maternityBenefits": { "no": "", "percent": "" }, "paternityBenefits": { "no": "", "percent": "" }, "dayCare": { "no": "", "percent": "" } },
+                "otherFemale": { "total": "", "healthInsurance": { "no": "", "percent": "" }, "accidentInsurance": { "no": "", "percent": "" }, "maternityBenefits": { "no": "", "percent": "" }, "paternityBenefits": { "no": "", "percent": "" }, "dayCare": { "no": "", "percent": "" } },
+                "otherTotal": { "total": "", "healthInsurance": { "no": "", "percent": "" }, "accidentInsurance": { "no": "", "percent": "" }, "maternityBenefits": { "no": "", "percent": "" }, "paternityBenefits": { "no": "", "percent": "" }, "dayCare": { "no": "", "percent": "" } }
+            },
+            "q1c_spendingOnWellbeing": {"currentFY": "percentage", "previousFY": "percentage"},
+            "q2_retirementBenefits": {
+                "pf": {
+                    "currentFY": { "employeesPercent": "XX%", "workersPercent": "XX%", "deductedDeposited": "Y or N" },
+                    "previousFY": { "employeesPercent": "XX%", "workersPercent": "XX%", "deductedDeposited": "Y or N" }
+                },
+                "gratuity": {
+                    "currentFY": { "employeesPercent": "", "workersPercent": "", "deductedDeposited": "" },
+                    "previousFY": { "employeesPercent": "", "workersPercent": "", "deductedDeposited": "" }
+                },
+                "esi": {
+                    "currentFY": { "employeesPercent": "", "workersPercent": "", "deductedDeposited": "" },
+                    "previousFY": { "employeesPercent": "", "workersPercent": "", "deductedDeposited": "" }
+                },
+                "nps": {
+                    "currentFY": { "employeesPercent": "", "workersPercent": "- if not applicable", "deductedDeposited": "" },
+                    "previousFY": { "employeesPercent": "", "workersPercent": "", "deductedDeposited": "" }
+                }
+            },
+            "q3_accessibilityOfWorkplaces": "descriptive text about accessibility measures",
+            "q4_equalOpportunityPolicy": {"exists": "Yes or No", "details": "policy description"},
+            "q5_parentalLeaveRates": {
+                "permanentEmployees": {
+                    "male": { "returnToWorkRate": "XX% or Not Applicable", "retentionRate": "XX% or Not Applicable" },
+                    "female": { "returnToWorkRate": "XX%", "retentionRate": "XX%" },
+                    "total": { "returnToWorkRate": "XX%", "retentionRate": "XX%" }
+                },
+                "permanentWorkers": {
+                    "male": { "returnToWorkRate": "", "retentionRate": "" },
+                    "female": { "returnToWorkRate": "", "retentionRate": "" },
+                    "total": { "returnToWorkRate": "", "retentionRate": "" }
+                }
+            },
+            "q6_grievanceMechanism": {
+                "permanentWorkers": "Yes or No",
+                "otherThanPermanentWorkers": "Yes or No",
+                "permanentEmployees": "Yes or No",
+                "otherThanPermanentEmployees": "Yes or No",
+                "details": "description of grievance mechanism"
+            },
+            "q7_membershipUnions": {
+                "permanentEmployees": {
+                    "currentFY": { "totalEmployees": "number or NIL", "membersInUnions": "number or NIL", "percentage": "XX% or NIL" },
+                    "previousFY": { "totalEmployees": "", "membersInUnions": "", "percentage": "" }
+                },
+                "permanentWorkers": {
+                    "currentFY": { "totalWorkers": "", "membersInUnions": "", "percentage": "" },
+                    "previousFY": { "totalWorkers": "", "membersInUnions": "", "percentage": "" }
+                }
+            },
+            "q8_trainingDetails": {
+                "employees": {
+                    "currentFY": {
+                        "male": { "total": "number", "healthSafety": { "no": "number", "percent": "XX%" }, "skillUpgradation": { "no": "number", "percent": "XX%" } },
+                        "female": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } },
+                        "total": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } }
+                    },
+                    "previousFY": {
+                        "male": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } },
+                        "female": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } },
+                        "total": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } }
+                    }
+                },
+                "workers": {
+                    "currentFY": {
+                        "male": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } },
+                        "female": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } },
+                        "total": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } }
+                    },
+                    "previousFY": {
+                        "male": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } },
+                        "female": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } },
+                        "total": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } }
+                    }
+                }
+            },
+            "q9_performanceReviews": {
+                "employees": {
+                    "currentFY": {
+                        "male": { "total": "number", "reviewed": "number", "percentage": "XX%" },
+                        "female": { "total": "", "reviewed": "", "percentage": "" },
+                        "total": { "total": "", "reviewed": "", "percentage": "" }
+                    },
+                    "previousFY": {
+                        "male": { "total": "", "reviewed": "", "percentage": "" },
+                        "female": { "total": "", "reviewed": "", "percentage": "" },
+                        "total": { "total": "", "reviewed": "", "percentage": "" }
+                    }
+                },
+                "workers": {
+                    "currentFY": {
+                        "male": { "total": "", "reviewed": "", "percentage": "" },
+                        "female": { "total": "", "reviewed": "", "percentage": "" },
+                        "total": { "total": "", "reviewed": "", "percentage": "" }
+                    },
+                    "previousFY": {
+                        "male": { "total": "", "reviewed": "", "percentage": "" },
+                        "female": { "total": "", "reviewed": "", "percentage": "" },
+                        "total": { "total": "", "reviewed": "", "percentage": "" }
+                    }
+                }
+            },
+            "q10_healthSafetyManagement": {
+                "a": "text about occupational health and safety management system",
+                "b": "text about hazard identification and risk assessment process",
+                "c": "text about worker reporting of hazards",
+                "d": "Yes or No"
+            },
+            "q11_safetyIncidents": {
+                "ltifr": {
+                    "employees": { "currentYear": "number or 0", "previousYear": "number or 0" },
+                    "workers": { "currentYear": "number", "previousYear": "number" }
+                },
+                "totalRecordableInjuries": {
+                    "employees": { "currentYear": "number", "previousYear": "number" },
+                    "workers": { "currentYear": "number", "previousYear": "number" }
+                },
+                "fatalities": {
+                    "employees": { "currentYear": "number", "previousYear": "number" },
+                    "workers": { "currentYear": "number", "previousYear": "number" }
+                },
+                "highConsequenceInjuries": {
+                    "employees": { "currentYear": "number", "previousYear": "number" },
+                    "workers": { "currentYear": "number", "previousYear": "number" }
+                }
+            },
+            "q12_safetyMeasures": "detailed text about safety measures and protocols",
+            "q13_complaintsWorkingConditions": {
+                "workingConditions": {
+                    "currentFY": { "filed": "number or -", "pendingResolution": "number or -", "remarks": "text or -" },
+                    "previousFY": { "filed": "", "pendingResolution": "", "remarks": "" }
+                },
+                "healthSafety": {
+                    "currentFY": { "filed": "", "pendingResolution": "", "remarks": "" },
+                    "previousFY": { "filed": "", "pendingResolution": "", "remarks": "" }
+                }
+            },
+            "q14_assessments": {
+                "healthSafetyPractices": "percentage coverage or description",
+                "workingConditions": "percentage coverage or description"
+            },
+            "q15_correctiveActions": "text about corrective actions taken"
+        },
+        "leadership": {
+            "q1_lifeInsurance": "text about life insurance coverage",
+            "q2_statutoryDuesValueChain": "text about statutory compliance",
+            "q3_rehabilitation": {
+                "employees": {
+                    "currentFY": { "totalAffected": "number", "rehabilitated": "number" },
+                    "previousFY": { "totalAffected": "number", "rehabilitated": "number" }
+                },
+                "workers": {
+                    "currentFY": { "totalAffected": "number", "rehabilitated": "number" },
+                    "previousFY": { "totalAffected": "number", "rehabilitated": "number" }
+                }
+            },
+            "q4_transitionAssistance": "Yes or No",
+            "q5_valueChainAssessment": {
+                "healthSafetyPractices": "text about assessments",
+                "workingConditions": "text about assessments"
+            },
+            "q6_correctiveActionsValueChain": "text or Not Applicable"
+        }
+    }
+}
+
+IMPORTANT NOTES:
+- For numbers in "total", "no", "reviewed" fields: use actual numbers as strings (e.g., "3424" not 3424)
+- For percentages: include % symbol (e.g., "24.01%")
+- For not applicable: use "NA" or "Not Applicable" or "NIL" as appropriate
+- For Yes/No fields: use exact "Yes" or "No" or "Y" or "N"
+- Fill ALL nested structures completely - don't leave any as empty objects"""
+        },
+        {
+            "id": "sectionC_p4_p5",
+            "name": "Section C: Principles 4-5 (Stakeholders & Human Rights)",
+            "delay_seconds": 10,
+            "prompt": """Extract Section C Principles 4 and 5.
 
 CRITICAL: Return ONLY valid JSON. No markdown, no explanations.
 
 {
-    "principle4": {"essential": {"stakeholderMapping": "", "vulnerableGroups": "", "socialImpact": "", "communityEngagement": ""}},
-    "principle5": {"essential": {"humanRightsPolicy": "", "dueDiligence": "", "assessmentCoverage": "", "minimumWages": "", "remediationProcess": ""}},
-    "principle6": {"essential": {"energyConsumption": "", "waterConsumption": "", "airEmissions": "", "wasteManagement": "", "scope1Emissions": "", "scope2Emissions": "", "environmentalCertifications": ""}}
+    "principle4": {
+        "essential": {
+            "q1_stakeholderIdentification": "",
+            "q2_stakeholderEngagement": []
+        },
+        "leadership": {
+            "q1_boardConsultation": "",
+            "q2_stakeholderConsultationUsed": "",
+            "q2_details": {"a": "", "b": "", "c": ""},
+            "q3_vulnerableEngagement": []
+        }
+    },
+    "principle5": {
+        "essential": {
+            "q1_humanRightsTraining": {},
+            "q2_minimumWages": {"employees": {}, "workers": {}},
+            "q3_medianRemuneration": {},
+            "q3a_grossWagesFemales": {"currentFY": "", "previousFY": ""},
+            "q4_focalPointHumanRights": "",
+            "q5_grievanceMechanisms": "",
+            "q6_complaints": {},
+            "q7_poshComplaints": {},
+            "q8_mechanismsPreventAdverseConsequences": "",
+            "q9_humanRightsInContracts": "",
+            "q10_assessments": {},
+            "q11_correctiveActions": ""
+        },
+        "leadership": {
+            "q1_businessProcessModified": "",
+            "q2_humanRightsDueDiligence": "",
+            "q3_accessibilityDifferentlyAbled": "",
+            "q4_valueChainAssessment": {},
+            "q5_correctiveActionsValueChain": ""
+        }
+    }
+}"""
+        },
+        {
+            "id": "sectionC_p6",
+            "name": "Section C: Principle 6 (Environment)",
+            "delay_seconds": 10,
+            "prompt": """Extract Section C Principle 6 with complete environmental data.
+
+CRITICAL: Return ONLY valid JSON. No markdown, no explanations.
+
+{
+    "principle6": {
+        "essential": {
+            "q1_energyConsumption": {"renewable": {}, "nonRenewable": {}, "totalEnergyConsumed": {}, "energyIntensityPerTurnover": {}, "energyIntensityPPP": {}, "energyIntensityPhysicalOutput": "", "externalAssessment": ""},
+            "q2_patScheme": "",
+            "q2_patFacilities": [],
+            "q3_waterDetails": {"withdrawal": {}, "consumption": {}, "waterIntensityPerTurnover": {}, "waterIntensityPPP": {}, "waterIntensityPhysicalOutput": "", "externalAssessment": ""},
+            "q4_waterDischarge": {},
+            "q5_zeroLiquidDischarge": "",
+            "q6_airEmissions": {},
+            "q7_ghgEmissions": {},
+            "q8_ghgReductionProjects": "",
+            "q9_wasteManagement": {},
+            "q10_wastePractices": "",
+            "q11_ecologicallySensitiveAreas": "",
+            "q11_ecologicallySensitiveDetails": "",
+            "q12_environmentalImpactAssessments": "",
+            "q13_environmentalCompliance": "",
+            "q13_nonCompliances": ""
+        },
+        "leadership": {
+            "q1_waterStressAreas": {},
+            "q2_scope3Emissions": "",
+            "q2_scope3EmissionsPerTurnover": "",
+            "q2_scope3IntensityPhysicalOutput": "",
+            "q2_externalAssessment": "",
+            "q3_biodiversityImpact": "",
+            "q4_resourceEfficiencyInitiatives": [],
+            "q5_businessContinuityPlan": "",
+            "q6_valueChainEnvironmentalImpact": "",
+            "q7_valueChainPartnersAssessed": ""
+        }
+    }
 }"""
         },
         {
             "id": "sectionC_p7_p8_p9",
             "name": "Section C: Principles 7-9",
             "delay_seconds": 10,
-            "prompt": """Extract Section C for ONLY Principles 7, 8, and 9.
+            "prompt": """Extract Section C Principles 7, 8, and 9.
 
 CRITICAL: Return ONLY valid JSON. No markdown, no explanations.
 
 {
-    "principle7": {"essential": {"publicPolicyAdvocacy": "", "antiCompetitiveConduct": "", "correctiveActions": ""}},
-    "principle8": {"essential": {"socialImpactAssessment": "", "rehabilitationResettlement": "", "csrSpending": "", "impactMeasurement": ""}},
-    "principle9": {"essential": {"consumerComplaints": "", "productRecall": "", "cyberSecurityBreaches": "", "dataPrivacy": "", "advertisingCompliance": ""}}
-}"""
+    "principle7": {
+        "essential": {
+            "q1a_numberOfAffiliations": "",
+            "q1b_affiliationsList": [],
+            "q2_antiCompetitiveConduct": {},
+            "q3_correctiveActions": ""
+        },
+        "leadership": {
+            "q1_publicPolicyPositions": "",
+            "q2_policyAdvocacyDetails": ""
         }
+    },
+    "principle8": {
+        "essential": {
+            "q1_socialImpactAssessments": {},
+            "q2_rehabilitationResettlement": {},
+            "q3_csrProjects": []
+        },
+        "leadership": {
+            "q1_impactAssessmentMethodology": "",
+            "q2_csrGrievances": {}
+        }
+    },
+    "principle9": {
+        "essential": {
+            "q1_consumerComplaints": {},
+            "q2_productRecalls": {},
+            "q3_cyberSecurityBreaches": {},
+            "q4_dataPrivacy": "",
+            "q5_advertisingCompliance": {}
+        },
+        "leadership": {
+            "q1_consumerEducation": "",
+            "q2_customerSatisfaction": {}
+        }
+    }
+}"""
+        },
     ]
 
 
@@ -573,10 +949,7 @@ def merge_extracted_data(all_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
     
     result = {
         "sectionA": {},
-        "sectionB": {
-            "policies": {},
-            "governance": {}
-        },
+        "sectionB": {},
         "sectionC": {}
     }
     
@@ -594,7 +967,7 @@ def merge_extracted_data(all_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
             result["sectionB"] = data
             print(f"[Merge] Merged Section B")
         elif chunk_id.startswith("sectionC_"):
-            # Section C split into 4 chunks: p1-p3, p4-p6, p7-p9
+            # Section C split into 6 chunks: p1_p2, p3, p4_p5, p6, p7_p8_p9
             result["sectionC"].update(data)
             print(f"[Merge] Merged {chunk_id}: {list(data.keys())}")
             
