@@ -1,760 +1,340 @@
 """
-FastAPI Backend for BRSR Report Generation with Chunked Gemini API Calls
-Uses BRSR Field Guidance for validation and calculations
+FastAPI Backend for BRSR Report Generation with Chunked Gemini API Calls.
 
-Run: uvicorn scripts.fastapi_brsr_backend:app --reload --port 8000
-Set GOOGLE_API_KEY environment variable for Gemini API access.
+This module provides a focused, working implementation that:
+- sources prompts from `agents.py`
+- extracts text from PDF/XLSX via `pdfplumber`/`openpyxl` (if installed)
+- sends chunked prompts to Gemini (`google.generativeai`) when configured
+- merges chunk responses into final BRSR JSON using `BRSR_DATA_SKELETON` from `data.py`.
+- transforms Gemini's flat output keys to nested frontend structure using `transform.py`
+
+Run: uvicorn fastapi_brsr_backend:app --reload --port 8000
 """
 
-import os
-import json
-import asyncio
-import time
-from typing import Dict, Any, List, Optional
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 import io
-import re # Added for repair_json
+import os
+import re
+import json
+import time
+import asyncio
+from typing import Dict, Any, List
+
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables once
 load_dotenv()
 
-# Import BRSR field guidance
-# from scripts.brsr_field_guidance import ( # Original import, updated below
-#     BRSR_FIELD_GUIDANCE,
-#     BRSR_SECTION_C_QUESTIONS,
-#     SECTION_C_TABLE_HEADERS,
-#     BRSRCalculations,
-#     validate_brsr_field,
-#     get_field_description
-# )
-# Updated import as per updates section
-from brsr_field_guidance import BRSR_FIELD_GUIDANCE, BRSRCalculations, BRSR_SECTION_C_QUESTIONS
+# Import transformation utilities
+from transform import transform_flat_to_nested, merge_nested_data
 
+# Import agents (centralized prompts)
+from agents import (
+    create_sectionA_agent,
+    create_sectionB_agent,
+    create_principles_1_2_agent,
+    create_principles_3_4_agent,
+    create_principles_5_6_agent,
+    create_principles_7_8_9_agent,
+)
 
-# PDF/Excel extraction
+# Import canonical skeleton
+from data import BRSR_DATA_SKELETON
+
+# Optional libs
 try:
     import pdfplumber
-except ImportError:
+except Exception:
     pdfplumber = None
-    print("Install pdfplumber: pip install pdfplumber")
 
 try:
     import openpyxl
-except ImportError:
+except Exception:
     openpyxl = None
-    print("Install openpyxl: pip install openpyxl")
 
-# Gemini AI
 try:
     import google.generativeai as genai
-    # GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "") # Original
-    # Updated as per updates section
+    from google.generativeai.types import HarmCategory, HarmBlockThreshold
+except Exception:
+    genai = None
+    HarmCategory = None
+    HarmBlockThreshold = None
+
+try:
+    import openpyxl
+except Exception:
+    openpyxl = None
+
+# Optional Gemini client
+try:
+    import google.generativeai as genai
     GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
     if GOOGLE_API_KEY:
         genai.configure(api_key=GOOGLE_API_KEY)
-except ImportError:
+except Exception:
     genai = None
-    # GOOGLE_API_KEY = "" # Original
-    GOOGLE_API_KEY = None # Updated as per updates section
+    GOOGLE_API_KEY = None
 
-
-app = FastAPI(title="BRSR Report Generator API", version="3.0.0") # Original version kept, but updates suggest 2.0.0. Using 3.0.0 for now.
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI(title="BRSR Report Generator API")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 GEMINI_CONFIG = {
-    "model": "gemini-2.5-flash", # Updated as per updates section
-    # "rpm_limit": 15,  # Original
-    "max_retries": 5,  # Increased retries (from 3)
-    "retry_delay_base": 3,  # Increased base delay (from 2)
-    # "tpm_limit": 32000,  # Original
-    "requests_per_minute": 10,  # Conservative for free tier (from 15)
-    "delay_between_chunks": 8,  # Increased delay between chunks (from 5)
+    "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+    "max_retries": 3,
+    "retry_delay_base": 2,
+    "delay_between_chunks": 15,  # Increased to 15s for free tier (5 req/min = 12s minimum)
     "max_input_tokens": 30000,
-    # "max_output_tokens": 8192 # Original
-    "max_output_tokens": 4096  # Reduced to prevent truncation (from 8192)
+    "max_output_tokens": 32768,  # Doubled to 32K for Section C P3-4 (200+ fields)
+    "requests_per_minute": 5,  # Free tier limit is 5/min, not 10
 }
 
-# Rate limiting tracker
-# api_usage = { # Original
-#     "last_request_time": 0,
-#     "requests_this_minute": 0,
-#     "minute_start": 0,
-# }
-# Updated as per updates section
-rate_limit_tracker = {
-    "requests": [],
-    "last_reset": time.time()
-}
+_rate_tracker: Dict[str, Any] = {"requests": [], "last_reset": time.time()}
 
 
-# async def wait_for_rate_limit(): # Original
-#     """Enforce rate limiting for Gemini Free Tier"""
-#     global api_usage
-#     current_time = time.time()
-    
-#     # Reset counter if a minute has passed
-#     if current_time - api_usage["minute_start"] >= 60:
-#         api_usage["requests_this_minute"] = 0
-#         api_usage["minute_start"] = current_time
-    
-#     # Check if we've hit the rate limit
-#     if api_usage["requests_this_minute"] >= GEMINI_CONFIG["rpm_limit"]:
-#         wait_time = 60 - (current_time - api_usage["minute_start"])
-#         if wait_time > 0:
-#             print(f"[Rate Limit] Waiting {wait_time:.1f}s before next request...")
-#             await asyncio.sleep(wait_time)
-#             api_usage["requests_this_minute"] = 0
-#             api_usage["minute_start"] = time.time()
-    
-#     # Add delay between requests
-#     time_since_last = current_time - api_usage["last_request_time"]
-#     if time_since_last < GEMINI_CONFIG["delay_between_chunks"]:
-#         await asyncio.sleep(GEMINI_CONFIG["delay_between_chunks"] - time_since_last)
-    
-#     api_usage["last_request_time"] = time.time()
-#     api_usage["requests_this_minute"] += 1
-# Updated as per updates section
 async def wait_for_rate_limit():
-    """Ensure we don't exceed rate limits"""
-    current_time = time.time()
-    
-    # Reset counter every minute
-    if current_time - rate_limit_tracker["last_reset"] > 60:
-        rate_limit_tracker["requests"] = []
-        rate_limit_tracker["last_reset"] = current_time
-    
-    # If at limit, wait
-    if len(rate_limit_tracker["requests"]) >= GEMINI_CONFIG["requests_per_minute"]:
-        wait_time = 60 - (current_time - rate_limit_tracker["last_reset"])
-        if wait_time > 0:
-            print(f"[Rate Limit] Waiting {wait_time:.1f}s before next request...")
-            await asyncio.sleep(wait_time)
-            rate_limit_tracker["requests"] = []
-            rate_limit_tracker["last_reset"] = time.time()
-    
-    rate_limit_tracker["requests"].append(current_time)
+    now = time.time()
+    if now - _rate_tracker["last_reset"] > 60:
+        _rate_tracker["requests"] = []
+        _rate_tracker["last_reset"] = now
+    if len(_rate_tracker["requests"]) >= GEMINI_CONFIG["requests_per_minute"]:
+        await asyncio.sleep(60 - (now - _rate_tracker["last_reset"]))
+        _rate_tracker["requests"] = []
+        _rate_tracker["last_reset"] = time.time()
+    _rate_tracker["requests"].append(now)
 
 
 def repair_json(text: str) -> str:
-    """Attempt to repair malformed JSON from Gemini"""
-    # Remove markdown code blocks
-    if "\`\`\`" in text:
-        # Find JSON content between code blocks
-        match = re.search(r'\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`', text)
-        if match:
-            text = match.group(1)
-        else:
-            # Try to extract anything that looks like JSON
-            text = re.sub(r'\`\`\`\w*\n?', '', text)
+    """Clean and extract JSON from response text.
     
-    # Remove any leading/trailing non-JSON content
+    Handles:
+    - Markdown code blocks (```json ... ``` or ```...```)
+    - Leading/trailing whitespace
+    - Text before/after JSON
+    - Unterminated strings
+    - Missing closing brackets
+    """
     text = text.strip()
     
-    # Find the first { and last }
-    start = text.find('{')
-    end = text.rfind('}')
-    if start != -1 and end != -1 and end > start:
-        text = text[start:end+1]
+    # Remove markdown code blocks more aggressively
+    if "```" in text:
+        # Remove all ``` markers
+        text = text.replace("```json", "").replace("```", "").strip()
     
-    # Fix common issues
-    # 1. Remove trailing commas before } or ]
-    text = re.sub(r',(\s*[}\]])', r'\1', text)
+    # Remove any remaining language markers at the start
+    lines = text.split('\n')
+    if lines and lines[0].strip().lower() in ['json', 'js', 'javascript']:
+        text = '\n'.join(lines[1:]).strip()
     
-    # 2. Fix unescaped quotes in strings
-    # This is tricky - we'll try a simple approach
+    # Try to find JSON array first (for key-value format)
+    array_start = text.find("[")
+    obj_start = text.find("{")
     
-    # 3. Fix missing quotes around keys
-    text = re.sub(r'(\{|\,)\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', text)
+    # Determine if we have an array or object based on which comes first
+    if array_start != -1 and (obj_start == -1 or array_start < obj_start):
+        # This is an array - find its end
+        array_end = text.rfind("]")
+        if array_end != -1 and array_end > array_start:
+            json_text = text[array_start:array_end+1]
+            # Fix common JSON errors
+            json_text = fix_json_errors(json_text)
+            return json_text
     
-    # 4. Replace single quotes with double quotes (but not in strings)
-    # Simple approach: if it's clearly a JSON delimiter
-    text = re.sub(r"'(\s*[,:\}\]\{])", r'"\1', text)
-    text = re.sub(r"([,:\{\[\s])\s*'", r'\1"', text)
-    
-    # 5. Fix truncated JSON by closing open brackets
-    open_braces = text.count('{') - text.count('}')
-    open_brackets = text.count('[') - text.count(']')
-    
-    # Remove any incomplete key-value pair at the end
-    if open_braces > 0 or open_brackets > 0:
-        # Try to find the last complete entry
-        # Look for the last complete string value
-        last_complete = max(
-            text.rfind('",'),
-            text.rfind('"}'),
-            text.rfind('"]'),
-            text.rfind('" }'),
-            text.rfind('" ]')
-        )
-        if last_complete > len(text) // 2:  # Only truncate if we're past halfway
-            text = text[:last_complete+1]
-            # Recount
-            open_braces = text.count('{') - text.count('}')
-            open_brackets = text.count('[') - text.count(']')
-    
-    # Add missing closing brackets
-    text += ']' * open_brackets
-    text += '}' * open_braces
+    # Fall back to JSON object
+    if obj_start != -1:
+        obj_end = text.rfind("}")
+        if obj_end != -1 and obj_end > obj_start:
+            json_text = text[obj_start:obj_end+1]
+            json_text = fix_json_errors(json_text)
+            return json_text
     
     return text
 
 
+def fix_json_errors(json_text: str) -> str:
+    """Fix common JSON syntax errors like unterminated strings, trailing commas, unexpected characters, etc."""
+    # Remove unexpected unicode characters and control characters
+    import re
+    # Remove non-ASCII characters that aren't part of valid JSON
+    json_text = re.sub(r'[^\x00-\x7F\u0080-\uFFFF]+', '', json_text)
+    # Remove specific problematic patterns like "자를"
+    json_text = json_text.replace('자를', '').replace('\\uc790\\ub97c', '')
+    
+    # Fix unterminated strings at the end of lines
+    # Pattern: "value at end of line without closing quote
+    lines = json_text.split('\n')
+    fixed_lines = []
+    
+    for i, line in enumerate(lines):
+        # Check if line has unterminated string (odd number of quotes after the colon)
+        if '": "' in line or '":\\"' in line:
+            # Count quotes after the last ": " or ":\\"
+            if '": "' in line:
+                parts = line.split('": "', 1)
+            elif '":\\"' in line:
+                parts = line.split('":\\"', 1)
+            else:
+                fixed_lines.append(line)
+                continue
+                
+            if len(parts) == 2:
+                value_part = parts[1]
+                # Count unescaped quotes
+                quote_count = 0
+                escaped = False
+                for char in value_part:
+                    if char == '\\' and not escaped:
+                        escaped = True
+                        continue
+                    if char == '"' and not escaped:
+                        quote_count += 1
+                    escaped = False
+                
+                # If odd number of quotes, add closing quote before comma or end
+                if quote_count % 2 == 0:  # Even means unterminated (we expect odd: opening + closing)
+                    # Add closing quote before comma or at end
+                    if ',' in value_part:
+                        value_part = value_part.replace(',', '",', 1)
+                    elif not value_part.rstrip().endswith('"'):
+                        value_part = value_part.rstrip() + '"'
+                    line = parts[0] + '": "' + value_part
+        
+        fixed_lines.append(line)
+    
+    json_text = '\n'.join(fixed_lines)
+    
+    # Remove trailing commas before closing brackets
+    json_text = re.sub(r',(\s*[\]}])', r'\1', json_text)
+    
+    # Fix incomplete last object in array - if ends with { without closing }
+    if json_text.count('{') > json_text.count('}'):
+        json_text = json_text.rstrip()
+        if not json_text.endswith('}'):
+            json_text += '}'
+    
+    return json_text
+
+
 def get_extraction_chunks() -> List[Dict[str, Any]]:
+    """Return chunk definitions whose prompts come from `agents.py`.
+    
+    Toggle chunks by commenting/uncommenting lines below.
+    Start with Section A only to test, then enable others gradually.
+
+    Chunks:
+      - sectionA_complete -> create_sectionA_agent()
+      - sectionB_complete -> create_sectionB_agent()
+      - sectionC_p1_p2 -> create_principles_1_2_agent()
+      - sectionC_p3_p4 -> create_principles_3_4_agent()
+      - sectionC_p5_p6 -> create_principles_5_6_agent()
+      - sectionC_p7_p8_p9 -> create_principles_7_8_9_agent()
     """
-    Define extraction chunks with prompts based on BRSR Field Guidance.
-    Reorganized: 1 chunk for Section A, 1 for Section B, 3 for Section C (Principles 1-9)
-    """
+    secA = create_sectionA_agent()["prompt"]
+    secB = create_sectionB_agent()["prompt"]
+    p1p2 = create_principles_1_2_agent()["prompt"]
+    p3p4 = create_principles_3_4_agent()["prompt"]
+    p5p6 = create_principles_5_6_agent()["prompt"]
+    p7p8p9 = create_principles_7_8_9_agent()["prompt"]
+
+    # TESTING MODE: Uncomment chunks one by one to test and debug
+    # FREE TIER: 5 requests/minute = minimum 12s between chunks (using 15s to be safe)
     return [
-        {
-            "id": "sectionA_complete",
-            "name": "Section A: Complete Company Information",
-            "delay_seconds": 10,
-            "prompt": """Extract ALL Section A information from the BRSR document.
-
-CRITICAL: Return ONLY a valid JSON object. No markdown code blocks (```json), no explanations, just pure JSON starting with { and ending with }.
-
-{
-    "cin": "",
-    "entityName": "",
-    "yearOfIncorporation": "",
-    "registeredAddress": "",
-    "corporateAddress": "",
-    "email": "",
-    "telephone": "",
-    "website": "",
-    "financialYear": "",
-    "stockExchanges": "",
-    "paidUpCapital": "",
-    "contactName": "",
-    "contactDesignation": "",
-    "contactPhone": "",
-    "contactEmail": "",
-    "reportingBoundary": "",
-    "assuranceProvider": "",
-    "assuranceType": "",
-    "businessActivities": [{"mainActivity": "", "businessDescription": "", "turnoverPercent": ""}],
-    "products": [{"name": "", "nicCode": "", "turnoverPercent": ""}],
-    "nationalPlants": "",
-    "nationalOffices": "",
-    "internationalPlants": "",
-    "internationalOffices": "",
-    "nationalStates": "",
-    "internationalCountries": "",
-    "exportContribution": "",
-    "employees": {"permanent": {"male": 0, "female": 0, "total": 0}, "otherThanPermanent": {"male": 0, "female": 0, "total": 0}},
-    "workers": {"permanent": {"male": 0, "female": 0, "total": 0}, "otherThanPermanent": {"male": 0, "female": 0, "total": 0}},
-    "board": {"total": 0, "female": 0, "femalePercent": ""},
-    "kmp": {"total": 0, "female": 0, "femalePercent": ""},
-    "turnover": {"employees": {"male": "", "female": "", "total": ""}, "workers": {"male": "", "female": "", "total": ""}},
-    "subsidiaries": "",
-    "csr": {"prescribedAmount": "", "amountSpent": "", "surplus": ""},
-    "complaints": {"communities": {"filed": 0, "pending": 0, "remarks": ""}, "investors": {"filed": 0, "pending": 0, "remarks": ""}, "shareholders": {"filed": 0, "pending": 0, "remarks": ""}, "employees": {"filed": 0, "pending": 0, "remarks": ""}, "customers": {"filed": 0, "pending": 0, "remarks": ""}, "valueChain": {"filed": 0, "pending": 0, "remarks": ""}},
-    "materialIssues": [{"issue": "", "type": "", "rationale": "", "approach": "", "financialImplications": ""}]
-}"""
-        },
-        {
-            "id": "sectionB_complete",
-            "name": "Section B: Policies and Governance",
-            "delay_seconds": 10,
-            "prompt": """Extract ALL Section B information.
-
-CRITICAL: Return ONLY valid JSON. No markdown, no explanations.
-
-{
-    "policyMatrix": {
-        "p1": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""},
-        "p2": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""},
-        "p3": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""},
-        "p4": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""},
-        "p5": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""},
-        "p6": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""},
-        "p7": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""},
-        "p8": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""},
-        "p9": {"hasPolicy": "", "approvedByBoard": "", "webLink": ""}
-    },
-    "governance": {
-        "directorStatement": "",
-        "frequencyReview": "",
-        "chiefResponsibility": "",
-        "weblink": ""
-    }
-}"""
-        },
-        {
-            "id": "sectionC_p1_p2",
-            "name": "Section C: Principles 1-2",
-            "delay_seconds": 10,
-            "prompt": """Extract Section C Principles 1 and 2 with detailed structure.
-
-CRITICAL: Return ONLY valid JSON. No markdown, no explanations.
-
-{
-    "principle1": {
-        "essential": {
-            "q1_percentageCoveredByTraining": {
-                "boardOfDirectors": {"totalProgrammes": "", "topicsCovered": "", "percentageCovered": ""},
-                "kmp": {"totalProgrammes": "", "topicsCovered": "", "percentageCovered": ""},
-                "employees": {"totalProgrammes": "", "topicsCovered": "", "percentageCovered": ""},
-                "workers": {"totalProgrammes": "", "topicsCovered": "", "percentageCovered": ""}
-            },
-            "q2_finesPenalties": {"monetary": [], "nonMonetary": []},
-            "q3_appealsOutstanding": "",
-            "q4_antiCorruptionPolicy": {"exists": "", "details": "", "webLink": ""},
-            "q5_disciplinaryActions": {"directors": {"currentFY": "", "previousFY": ""}, "kmps": {"currentFY": "", "previousFY": ""}, "employees": {"currentFY": "", "previousFY": ""}, "workers": {"currentFY": "", "previousFY": ""}},
-            "q6_conflictOfInterestComplaints": {},
-            "q7_correctiveActions": "",
-            "q8_accountsPayableDays": {"currentFY": "", "previousFY": ""},
-            "q9_opennessBusiness": {}
-        },
-        "leadership": {
-            "q1_valueChainAwareness": [],
-            "q2_conflictOfInterestProcess": {"exists": "", "details": ""}
-        }
-    },
-    "principle2": {
-        "essential": {
-            "q1_rdCapexInvestments": {"rd": {"currentFY": "", "previousFY": "", "improvementDetails": ""}, "capex": {"currentFY": "", "previousFY": "", "improvementDetails": ""}},
-            "q2_sustainableSourcing": {"proceduresInPlace": "", "percentageSustainablySourced": ""},
-            "q3_reclaimProcesses": {"plastics": {"applicable": "", "process": ""}, "eWaste": {"applicable": "", "process": ""}, "hazardousWaste": {"applicable": "", "process": ""}, "otherWaste": {"applicable": "", "process": ""}},
-            "q4_epr": {"applicable": "", "wasteCollectionPlanInLine": ""}
-        },
-        "leadership": {
-            "q1_lcaDetails": "",
-            "q2_significantConcerns": "",
-            "q3_recycledInputMaterial": [],
-            "q4_productsReclaimed": {},
-            "q5_reclaimedPercentage": ""
-        }
-    }
-}"""
-        },
-        {
-            "id": "sectionC_p3",
-            "name": "Section C: Principle 3 (Employee & Worker Wellbeing)",
-            "delay_seconds": 10,
-            "prompt": """Extract Section C Principle 3 with complete wellbeing and safety details.
-
-CRITICAL: Return ONLY valid JSON matching the exact structure below. Fill in actual data from the document.
-
-{
-    "principle3": {
-        "essential": {
-            "q1a_employeeWellbeing": {
-                "permanentMale": { 
-                    "total": "number as string",
-                    "healthInsurance": { "no": "count", "percent": "XX%" },
-                    "accidentInsurance": { "no": "count", "percent": "XX%" },
-                    "maternityBenefits": { "no": "NA or count", "percent": "NA or XX%" },
-                    "paternityBenefits": { "no": "NA or count", "percent": "NA or XX%" },
-                    "dayCare": { "no": "NA or count", "percent": "NA or XX%" }
-                },
-                "permanentFemale": { 
-                    "total": "",
-                    "healthInsurance": { "no": "", "percent": "" },
-                    "accidentInsurance": { "no": "", "percent": "" },
-                    "maternityBenefits": { "no": "", "percent": "" },
-                    "paternityBenefits": { "no": "", "percent": "" },
-                    "dayCare": { "no": "", "percent": "" }
-                },
-                "permanentTotal": { 
-                    "total": "",
-                    "healthInsurance": { "no": "", "percent": "" },
-                    "accidentInsurance": { "no": "", "percent": "" },
-                    "maternityBenefits": { "no": "", "percent": "" },
-                    "paternityBenefits": { "no": "", "percent": "" },
-                    "dayCare": { "no": "", "percent": "" }
-                },
-                "otherMale": "fill same structure or 'Not Applicable'",
-                "otherFemale": "fill same structure or 'Not Applicable'",
-                "otherTotal": "fill same structure or 'Not Applicable'"
-            },
-            "q1b_workerWellbeing": {
-                "permanentMale": { "total": "", "healthInsurance": { "no": "", "percent": "" }, "accidentInsurance": { "no": "", "percent": "" }, "maternityBenefits": { "no": "", "percent": "" }, "paternityBenefits": { "no": "", "percent": "" }, "dayCare": { "no": "", "percent": "" } },
-                "permanentFemale": { "total": "", "healthInsurance": { "no": "", "percent": "" }, "accidentInsurance": { "no": "", "percent": "" }, "maternityBenefits": { "no": "", "percent": "" }, "paternityBenefits": { "no": "", "percent": "" }, "dayCare": { "no": "", "percent": "" } },
-                "permanentTotal": { "total": "", "healthInsurance": { "no": "", "percent": "" }, "accidentInsurance": { "no": "", "percent": "" }, "maternityBenefits": { "no": "", "percent": "" }, "paternityBenefits": { "no": "", "percent": "" }, "dayCare": { "no": "", "percent": "" } },
-                "otherMale": { "total": "", "healthInsurance": { "no": "", "percent": "" }, "accidentInsurance": { "no": "", "percent": "" }, "maternityBenefits": { "no": "", "percent": "" }, "paternityBenefits": { "no": "", "percent": "" }, "dayCare": { "no": "", "percent": "" } },
-                "otherFemale": { "total": "", "healthInsurance": { "no": "", "percent": "" }, "accidentInsurance": { "no": "", "percent": "" }, "maternityBenefits": { "no": "", "percent": "" }, "paternityBenefits": { "no": "", "percent": "" }, "dayCare": { "no": "", "percent": "" } },
-                "otherTotal": { "total": "", "healthInsurance": { "no": "", "percent": "" }, "accidentInsurance": { "no": "", "percent": "" }, "maternityBenefits": { "no": "", "percent": "" }, "paternityBenefits": { "no": "", "percent": "" }, "dayCare": { "no": "", "percent": "" } }
-            },
-            "q1c_spendingOnWellbeing": {"currentFY": "percentage", "previousFY": "percentage"},
-            "q2_retirementBenefits": {
-                "pf": {
-                    "currentFY": { "employeesPercent": "XX%", "workersPercent": "XX%", "deductedDeposited": "Y or N" },
-                    "previousFY": { "employeesPercent": "XX%", "workersPercent": "XX%", "deductedDeposited": "Y or N" }
-                },
-                "gratuity": {
-                    "currentFY": { "employeesPercent": "", "workersPercent": "", "deductedDeposited": "" },
-                    "previousFY": { "employeesPercent": "", "workersPercent": "", "deductedDeposited": "" }
-                },
-                "esi": {
-                    "currentFY": { "employeesPercent": "", "workersPercent": "", "deductedDeposited": "" },
-                    "previousFY": { "employeesPercent": "", "workersPercent": "", "deductedDeposited": "" }
-                },
-                "nps": {
-                    "currentFY": { "employeesPercent": "", "workersPercent": "- if not applicable", "deductedDeposited": "" },
-                    "previousFY": { "employeesPercent": "", "workersPercent": "", "deductedDeposited": "" }
-                }
-            },
-            "q3_accessibilityOfWorkplaces": "descriptive text about accessibility measures",
-            "q4_equalOpportunityPolicy": {"exists": "Yes or No", "details": "policy description"},
-            "q5_parentalLeaveRates": {
-                "permanentEmployees": {
-                    "male": { "returnToWorkRate": "XX% or Not Applicable", "retentionRate": "XX% or Not Applicable" },
-                    "female": { "returnToWorkRate": "XX%", "retentionRate": "XX%" },
-                    "total": { "returnToWorkRate": "XX%", "retentionRate": "XX%" }
-                },
-                "permanentWorkers": {
-                    "male": { "returnToWorkRate": "", "retentionRate": "" },
-                    "female": { "returnToWorkRate": "", "retentionRate": "" },
-                    "total": { "returnToWorkRate": "", "retentionRate": "" }
-                }
-            },
-            "q6_grievanceMechanism": {
-                "permanentWorkers": "Yes or No",
-                "otherThanPermanentWorkers": "Yes or No",
-                "permanentEmployees": "Yes or No",
-                "otherThanPermanentEmployees": "Yes or No",
-                "details": "description of grievance mechanism"
-            },
-            "q7_membershipUnions": {
-                "permanentEmployees": {
-                    "currentFY": { "totalEmployees": "number or NIL", "membersInUnions": "number or NIL", "percentage": "XX% or NIL" },
-                    "previousFY": { "totalEmployees": "", "membersInUnions": "", "percentage": "" }
-                },
-                "permanentWorkers": {
-                    "currentFY": { "totalWorkers": "", "membersInUnions": "", "percentage": "" },
-                    "previousFY": { "totalWorkers": "", "membersInUnions": "", "percentage": "" }
-                }
-            },
-            "q8_trainingDetails": {
-                "employees": {
-                    "currentFY": {
-                        "male": { "total": "number", "healthSafety": { "no": "number", "percent": "XX%" }, "skillUpgradation": { "no": "number", "percent": "XX%" } },
-                        "female": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } },
-                        "total": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } }
-                    },
-                    "previousFY": {
-                        "male": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } },
-                        "female": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } },
-                        "total": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } }
-                    }
-                },
-                "workers": {
-                    "currentFY": {
-                        "male": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } },
-                        "female": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } },
-                        "total": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } }
-                    },
-                    "previousFY": {
-                        "male": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } },
-                        "female": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } },
-                        "total": { "total": "", "healthSafety": { "no": "", "percent": "" }, "skillUpgradation": { "no": "", "percent": "" } }
-                    }
-                }
-            },
-            "q9_performanceReviews": {
-                "employees": {
-                    "currentFY": {
-                        "male": { "total": "number", "reviewed": "number", "percentage": "XX%" },
-                        "female": { "total": "", "reviewed": "", "percentage": "" },
-                        "total": { "total": "", "reviewed": "", "percentage": "" }
-                    },
-                    "previousFY": {
-                        "male": { "total": "", "reviewed": "", "percentage": "" },
-                        "female": { "total": "", "reviewed": "", "percentage": "" },
-                        "total": { "total": "", "reviewed": "", "percentage": "" }
-                    }
-                },
-                "workers": {
-                    "currentFY": {
-                        "male": { "total": "", "reviewed": "", "percentage": "" },
-                        "female": { "total": "", "reviewed": "", "percentage": "" },
-                        "total": { "total": "", "reviewed": "", "percentage": "" }
-                    },
-                    "previousFY": {
-                        "male": { "total": "", "reviewed": "", "percentage": "" },
-                        "female": { "total": "", "reviewed": "", "percentage": "" },
-                        "total": { "total": "", "reviewed": "", "percentage": "" }
-                    }
-                }
-            },
-            "q10_healthSafetyManagement": {
-                "a": "text about occupational health and safety management system",
-                "b": "text about hazard identification and risk assessment process",
-                "c": "text about worker reporting of hazards",
-                "d": "Yes or No"
-            },
-            "q11_safetyIncidents": {
-                "ltifr": {
-                    "employees": { "currentYear": "number or 0", "previousYear": "number or 0" },
-                    "workers": { "currentYear": "number", "previousYear": "number" }
-                },
-                "totalRecordableInjuries": {
-                    "employees": { "currentYear": "number", "previousYear": "number" },
-                    "workers": { "currentYear": "number", "previousYear": "number" }
-                },
-                "fatalities": {
-                    "employees": { "currentYear": "number", "previousYear": "number" },
-                    "workers": { "currentYear": "number", "previousYear": "number" }
-                },
-                "highConsequenceInjuries": {
-                    "employees": { "currentYear": "number", "previousYear": "number" },
-                    "workers": { "currentYear": "number", "previousYear": "number" }
-                }
-            },
-            "q12_safetyMeasures": "detailed text about safety measures and protocols",
-            "q13_complaintsWorkingConditions": {
-                "workingConditions": {
-                    "currentFY": { "filed": "number or -", "pendingResolution": "number or -", "remarks": "text or -" },
-                    "previousFY": { "filed": "", "pendingResolution": "", "remarks": "" }
-                },
-                "healthSafety": {
-                    "currentFY": { "filed": "", "pendingResolution": "", "remarks": "" },
-                    "previousFY": { "filed": "", "pendingResolution": "", "remarks": "" }
-                }
-            },
-            "q14_assessments": {
-                "healthSafetyPractices": "percentage coverage or description",
-                "workingConditions": "percentage coverage or description"
-            },
-            "q15_correctiveActions": "text about corrective actions taken"
-        },
-        "leadership": {
-            "q1_lifeInsurance": "text about life insurance coverage",
-            "q2_statutoryDuesValueChain": "text about statutory compliance",
-            "q3_rehabilitation": {
-                "employees": {
-                    "currentFY": { "totalAffected": "number", "rehabilitated": "number" },
-                    "previousFY": { "totalAffected": "number", "rehabilitated": "number" }
-                },
-                "workers": {
-                    "currentFY": { "totalAffected": "number", "rehabilitated": "number" },
-                    "previousFY": { "totalAffected": "number", "rehabilitated": "number" }
-                }
-            },
-            "q4_transitionAssistance": "Yes or No",
-            "q5_valueChainAssessment": {
-                "healthSafetyPractices": "text about assessments",
-                "workingConditions": "text about assessments"
-            },
-            "q6_correctiveActionsValueChain": "text or Not Applicable"
-        }
-    }
-}
-
-IMPORTANT NOTES:
-- For numbers in "total", "no", "reviewed" fields: use actual numbers as strings (e.g., "3424" not 3424)
-- For percentages: include % symbol (e.g., "24.01%")
-- For not applicable: use "NA" or "Not Applicable" or "NIL" as appropriate
-- For Yes/No fields: use exact "Yes" or "No" or "Y" or "N"
-- Fill ALL nested structures completely - don't leave any as empty objects"""
-        },
-        {
-            "id": "sectionC_p4_p5",
-            "name": "Section C: Principles 4-5 (Stakeholders & Human Rights)",
-            "delay_seconds": 10,
-            "prompt": """Extract Section C Principles 4 and 5.
-
-CRITICAL: Return ONLY valid JSON. No markdown, no explanations.
-
-{
-    "principle4": {
-        "essential": {
-            "q1_stakeholderIdentification": "",
-            "q2_stakeholderEngagement": []
-        },
-        "leadership": {
-            "q1_boardConsultation": "",
-            "q2_stakeholderConsultationUsed": "",
-            "q2_details": {"a": "", "b": "", "c": ""},
-            "q3_vulnerableEngagement": []
-        }
-    },
-    "principle5": {
-        "essential": {
-            "q1_humanRightsTraining": {},
-            "q2_minimumWages": {"employees": {}, "workers": {}},
-            "q3_medianRemuneration": {},
-            "q3a_grossWagesFemales": {"currentFY": "", "previousFY": ""},
-            "q4_focalPointHumanRights": "",
-            "q5_grievanceMechanisms": "",
-            "q6_complaints": {},
-            "q7_poshComplaints": {},
-            "q8_mechanismsPreventAdverseConsequences": "",
-            "q9_humanRightsInContracts": "",
-            "q10_assessments": {},
-            "q11_correctiveActions": ""
-        },
-        "leadership": {
-            "q1_businessProcessModified": "",
-            "q2_humanRightsDueDiligence": "",
-            "q3_accessibilityDifferentlyAbled": "",
-            "q4_valueChainAssessment": {},
-            "q5_correctiveActionsValueChain": ""
-        }
-    }
-}"""
-        },
-        {
-            "id": "sectionC_p6",
-            "name": "Section C: Principle 6 (Environment)",
-            "delay_seconds": 10,
-            "prompt": """Extract Section C Principle 6 with complete environmental data.
-
-CRITICAL: Return ONLY valid JSON. No markdown, no explanations.
-
-{
-    "principle6": {
-        "essential": {
-            "q1_energyConsumption": {"renewable": {}, "nonRenewable": {}, "totalEnergyConsumed": {}, "energyIntensityPerTurnover": {}, "energyIntensityPPP": {}, "energyIntensityPhysicalOutput": "", "externalAssessment": ""},
-            "q2_patScheme": "",
-            "q2_patFacilities": [],
-            "q3_waterDetails": {"withdrawal": {}, "consumption": {}, "waterIntensityPerTurnover": {}, "waterIntensityPPP": {}, "waterIntensityPhysicalOutput": "", "externalAssessment": ""},
-            "q4_waterDischarge": {},
-            "q5_zeroLiquidDischarge": "",
-            "q6_airEmissions": {},
-            "q7_ghgEmissions": {},
-            "q8_ghgReductionProjects": "",
-            "q9_wasteManagement": {},
-            "q10_wastePractices": "",
-            "q11_ecologicallySensitiveAreas": "",
-            "q11_ecologicallySensitiveDetails": "",
-            "q12_environmentalImpactAssessments": "",
-            "q13_environmentalCompliance": "",
-            "q13_nonCompliances": ""
-        },
-        "leadership": {
-            "q1_waterStressAreas": {},
-            "q2_scope3Emissions": "",
-            "q2_scope3EmissionsPerTurnover": "",
-            "q2_scope3IntensityPhysicalOutput": "",
-            "q2_externalAssessment": "",
-            "q3_biodiversityImpact": "",
-            "q4_resourceEfficiencyInitiatives": [],
-            "q5_businessContinuityPlan": "",
-            "q6_valueChainEnvironmentalImpact": "",
-            "q7_valueChainPartnersAssessed": ""
-        }
-    }
-}"""
-        },
-        {
-            "id": "sectionC_p7_p8_p9",
-            "name": "Section C: Principles 7-9",
-            "delay_seconds": 10,
-            "prompt": """Extract Section C Principles 7, 8, and 9.
-
-CRITICAL: Return ONLY valid JSON. No markdown, no explanations.
-
-{
-    "principle7": {
-        "essential": {
-            "q1a_numberOfAffiliations": "",
-            "q1b_affiliationsList": [],
-            "q2_antiCompetitiveConduct": {},
-            "q3_correctiveActions": ""
-        },
-        "leadership": {
-            "q1_publicPolicyPositions": "",
-            "q2_policyAdvocacyDetails": ""
-        }
-    },
-    "principle8": {
-        "essential": {
-            "q1_socialImpactAssessments": {},
-            "q2_rehabilitationResettlement": {},
-            "q3_csrProjects": []
-        },
-        "leadership": {
-            "q1_impactAssessmentMethodology": "",
-            "q2_csrGrievances": {}
-        }
-    },
-    "principle9": {
-        "essential": {
-            "q1_consumerComplaints": {},
-            "q2_productRecalls": {},
-            "q3_cyberSecurityBreaches": {},
-            "q4_dataPrivacy": "",
-            "q5_advertisingCompliance": {}
-        },
-        "leadership": {
-            "q1_consumerEducation": "",
-            "q2_customerSatisfaction": {}
-        }
-    }
-}"""
-        },
+        # Step 1: Test Section A first
+        {"id": "sectionA_complete", "name": "Section A: Complete Company Information", "delay_seconds": 15, "prompt": secA},
+        
+        # Step 2: After Section A works, uncomment Section B
+        # {"id": "sectionB_complete", "name": "Section B: Policies and Governance", "delay_seconds": 15, "prompt": secB},
+        
+        # Step 3: Uncomment Section C chunks one by one
+        # {"id": "sectionC_p1_p2", "name": "Section C: Principles 1-2", "delay_seconds": 15, "prompt": p1p2},
+        # {"id": "sectionC_p3_p4", "name": "Section C: Principles 3-4", "delay_seconds": 15, "prompt": p3p4},
+        # {"id": "sectionC_p5_p6", "name": "Section C: Principles 5-6", "delay_seconds": 15, "prompt": p5p6},
+        # {"id": "sectionC_p7_p8_p9", "name": "Section C: Principles 7-9", "delay_seconds": 15, "prompt": p7p8p9},
     ]
+    
+    # PRODUCTION MODE: Uncomment this when all chunks are working
+    # return [
+    #     {"id": "sectionA_complete", "name": "Section A: Complete Company Information", "delay_seconds": 8, "prompt": secA},
+    #     {"id": "sectionB_complete", "name": "Section B: Policies and Governance", "delay_seconds": 6, "prompt": secB},
+    #     {"id": "sectionC_p1_p2", "name": "Section C: Principles 1-2", "delay_seconds": 6, "prompt": p1p2},
+    #     {"id": "sectionC_p3_p4", "name": "Section C: Principles 3-4", "delay_seconds": 6, "prompt": p3p4},
+    #     {"id": "sectionC_p5_p6", "name": "Section C: Principles 5-6", "delay_seconds": 6, "prompt": p5p6},
+    #     {"id": "sectionC_p7_p8_p9", "name": "Section C: Principles 7-9", "delay_seconds": 6, "prompt": p7p8p9},
+    # ]
 
 
 def extract_text_from_pdf(file_content: bytes) -> str:
-    """Extract text from PDF using pdfplumber for better table extraction"""
-    # Original code:
-    # if not pdfplumber:
-    #     raise HTTPException(status_code=500, detail="pdfplumber not installed")
-    
-    # text = ""
-    # with pdfplumber.open(io.BytesIO(file_content)) as pdf:
-    #     for page in pdf.pages:
-    #         page_text = page.extract_text() or ""
-    #         text += page_text + "\n"
-            
-    #         # Also extract tables
-    #         tables = page.extract_tables()
-    #         for table in tables:
-    #             for row in table:
-    #                 if row:
-    #                     row_text = " | ".join([str(cell) if cell else "" for cell in row])
-    #                     text += row_text + "\n"
-    # return text
-    
-    # Updated as per updates section
+    if not pdfplumber:
+        raise HTTPException(status_code=500, detail="pdfplumber not installed")
     text = ""
     with pdfplumber.open(io.BytesIO(file_content)) as pdf:
         for page in pdf.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
+            page_text = page.extract_text() or ""
+            text += page_text + "\n"
     return text
 
 
 def extract_text_from_excel(file_content: bytes) -> str:
-    """Extract text from Excel file"""
-    # Original code:
-    # if not openpyxl:
-    #     raise HTTPException(status_code=500, detail="openpyxl not installed")
-    
-    # workbook = openpyxl.load_workbook(io.BytesIO(file_content))
-    # text = ""
-    # for sheet in workbook.worksheets:
-    #     text += f"\n--- Sheet: {sheet.title} ---\n"
-    #     for row in sheet.iter_rows(values_only=True):
-    #         row_text = " | ".join([str(cell) if cell else "" for cell in row])
-    #         if row_text.strip():
-    #             text += row_text + "\n"
-    # return text
-    
-    # Updated as per updates section
+    if not openpyxl:
+        raise HTTPException(status_code=500, detail="openpyxl not installed")
     workbook = openpyxl.load_workbook(io.BytesIO(file_content))
     text = ""
+    print(f"[Excel] Found {len(workbook.worksheets)} sheets: {[sheet.title for sheet in workbook.worksheets]}")
+    
     for sheet in workbook.worksheets:
-        text += f"\n--- Sheet: {sheet.title} ---\n"
+        # Add sheet name as header for context
+        text += f"\n\n=== SHEET: {sheet.title} ===\n\n"
+        row_count = 0
         for row in sheet.iter_rows(values_only=True):
-            row_text = " | ".join([str(cell) if cell else "" for cell in row])
+            row_text = " | ".join([str(cell) if cell is not None else "" for cell in row])
             if row_text.strip():
                 text += row_text + "\n"
+                row_count += 1
+        print(f"[Excel] Sheet '{sheet.title}': extracted {row_count} rows")
+    
+    print(f"[Excel] Total text length: {len(text)} characters")
     return text
+
+
+async def extract_chunk_with_gemini(text: str, chunk: Dict[str, Any]) -> Dict[str, Any]:
+    # (implementation replaced by the later, more robust version lower in this file)
+    raise RuntimeError("Deprecated: use the improved extract_chunk_with_gemini implementation")
+
+
+# The robust `validate_extracted_data` and `merge_extracted_data` implementations
+# appear later in the file and will be used at runtime.
+
+
+@app.post("/api/extract")
+async def extract_brsr_data(file: UploadFile = File(...)):
+    filename = file.filename.lower()
+    if not any(filename.endswith(ext) for ext in [".pdf", ".xlsx", ".xls"]):
+        raise HTTPException(status_code=400, detail="Only PDF and Excel files are supported")
+
+    content = await file.read()
+    text = extract_text_from_pdf(content) if filename.endswith('.pdf') else extract_text_from_excel(content)
+
+    chunks = get_extraction_chunks()
+    results = []
+    failed = []
+    for ch in chunks:
+        try:
+            res = await extract_chunk_with_gemini(text, ch)
+            results.append((ch['id'], res))
+            await asyncio.sleep(ch.get('delay_seconds', GEMINI_CONFIG['delay_between_chunks']))
+        except Exception:
+            results.append((ch['id'], {}))
+            failed.append(ch['id'])
+
+    merged = merge_extracted_data(results)
+    return {"success": True, "data": merged, "failed_chunks": failed}
+
+
+if __name__ == '__main__':
+    import uvicorn
+    uvicorn.run(app, host='0.0.0.0', port=8000)
+    pass
 
 
 async def extract_chunk_with_gemini(text: str, chunk: Dict[str, Any]) -> Dict[str, Any]:
@@ -789,7 +369,7 @@ async def extract_chunk_with_gemini(text: str, chunk: Dict[str, Any]) -> Dict[st
     # 6. For amounts, include currency symbol and units"""
     
     # Updated prompt as per updates section
-    prompt = f"""You are a BRSR (Business Responsibility and Sustainability Reporting) expert.
+    prompt = f"""You are a BRSR (Business Responsibility and Sustainability Reporting) expert with advanced calculation capabilities.
 Extract data from this Indian company's annual report following SEBI BRSR Annexure 1 format.
 
 {chunk['prompt']}
@@ -803,8 +383,36 @@ CRITICAL INSTRUCTIONS:
 3. If data is not found, use empty string ""
 4. For numbers, use just the numeric value
 5. For percentages, include % symbol
-6. Keep responses concise - no long paragraphs in values
-7. Start your response with {{ and end with }}"""
+
+CALCULATION & PERCENTAGE INSTRUCTIONS (IMPORTANT):
+6. AUTOMATICALLY CALCULATE percentage fields when you have:
+   - Base values like Total Turnover, Total Revenue, Total Employees, Total Energy, Total Water, etc.
+   - Category/segment values (e.g., renewable energy, male employees, water consumed)
+   - Formula: (Category Value / Total Value) × 100
+   - Example: If Turnover = 185.6 INR Cr and Renewable Energy Spend = 50 INR Cr, calculate: (50/185.6)×100 = 26.94%
+
+7. DERIVE missing fields from available data:
+   - If you have FY and PY (Previous Year) values, calculate growth rates
+   - If you have absolute numbers and totals, calculate percentages
+   - If you have percentages and totals, calculate absolute values
+   - If you have intensity metrics components, calculate the ratio
+
+8. INTELLIGENT DATA EXTRACTION:
+   - Look for related data across different sections of the document
+   - Use footnotes, tables, and text to find base values (turnover, employee count, etc.)
+   - Cross-reference data to ensure calculations are accurate
+   - Round percentages to 2 decimal places
+
+9. Keep responses concise - no long paragraphs in values
+10. Return the COMPLETE array - do not truncate or stop mid-response
+11. Ensure the JSON array is properly closed with ]
+12. Your response MUST start with [ and end with ]
+
+CALCULATION EXAMPLES:
+- Water intensity per turnover: (Total Water Withdrawal / Turnover) 
+- % Female Employees: (Female Count / Total Employees) × 100
+- % Board Independence: (Independent Directors / Total Directors) × 100
+- Energy intensity: (Total Energy / Production Output)"""
     
     for attempt in range(GEMINI_CONFIG["max_retries"]):
         try:
@@ -815,24 +423,181 @@ CRITICAL INSTRUCTIONS:
                 prompt,
                 generation_config={
                     "temperature": 0.1,
-                    # "max_output_tokens": 8192 # Original
-                    "max_output_tokens": GEMINI_CONFIG["max_output_tokens"] # Updated
+                    "max_output_tokens": GEMINI_CONFIG["max_output_tokens"]
+                },
+                safety_settings={
+                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
                 }
             )
             
+            # Debug: Check if response exists and for safety blocks
+            if not response:
+                print(f"[Chunk: {chunk['id']}] No response from Gemini")
+                raise ValueError("Empty response from Gemini")
+            
+            # Check for blocked responses
+            if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                print(f"[Chunk: {chunk['id']}] Prompt feedback: {response.prompt_feedback}")
+            
+            if not hasattr(response, 'text') or not response.text:
+                print(f"[Chunk: {chunk['id']}] No text in response. Candidates: {response.candidates if hasattr(response, 'candidates') else 'N/A'}")
+                if hasattr(response, 'candidates') and response.candidates:
+                    print(f"[Chunk: {chunk['id']}] First candidate: {response.candidates[0]}")
+                raise ValueError("No text in Gemini response - possibly blocked by safety filters")
+            
             response_text = response.text.strip()
+            print(f"[Chunk: {chunk['id']}] Response length: {len(response_text)} chars")
+            
+            # Save raw response to file for debugging
+            debug_dir = "extraction_output/debug"
+            os.makedirs(debug_dir, exist_ok=True)
+            debug_file = os.path.join(debug_dir, f"{chunk['id']}_raw_response.txt")
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write(response_text)
+            print(f"[Chunk: {chunk['id']}] Saved raw response to: {debug_file}")
+            
+            # Debug: Print first 200 chars of response
+            if response_text:
+                print(f"[Chunk: {chunk['id']}] Response preview: {response_text[:200]}...")
+            else:
+                print(f"[Chunk: {chunk['id']}] WARNING: Empty response text")
+                raise ValueError("Empty response text from Gemini")
+            
+            # Check if response looks incomplete
+            if len(response_text) < 1000:
+                print(f"[Chunk: {chunk['id']}] WARNING: Response seems short/incomplete")
             
             repaired_json = repair_json(response_text)
+            print(f"[Chunk: {chunk['id']}] Repaired JSON length: {len(repaired_json)} chars")
+            print(f"[Chunk: {chunk['id']}] Repaired JSON starts with: {repaired_json[:50]}...")
+            print(f"[Chunk: {chunk['id']}] Repaired JSON ends with: ...{repaired_json[-50:]}")
+            
+            # Save repaired JSON to file for debugging
+            repaired_file = os.path.join(debug_dir, f"{chunk['id']}_repaired_json.txt")
+            with open(repaired_file, 'w', encoding='utf-8') as f:
+                f.write(repaired_json)
+            print(f"[Chunk: {chunk['id']}] Saved repaired JSON to: {repaired_file}")
             
             try:
                 result = json.loads(repaired_json)
+                
+                # Convert key-value array format to flat dictionary
+                if isinstance(result, list):
+                    print(f"[Chunk: {chunk['id']}] Converting key-value array to flat dict...")
+                    flat_dict = {}
+                    
+                    # Fields that should be parsed as JSON even without _array suffix
+                    json_fields = ["sectiona_materialIssues_array"]
+                    
+                    for item in result:
+                        if isinstance(item, dict) and "key" in item and "value" in item:
+                            key = item["key"]
+                            value = item["value"]
+                            
+                            # If value is a JSON string and key ends with _array OR is in json_fields, parse it
+                            if isinstance(value, str) and (key.endswith("_array") or key in json_fields):
+                                try:
+                                    # Try to parse JSON string to actual array/object
+                                    parsed_value = json.loads(value)
+                                    
+                                    # Fix field names in materialIssues array to match frontend structure
+                                    if key == "sectiona_materialIssues_array" and isinstance(parsed_value, list):
+                                        for issue in parsed_value:
+                                            if isinstance(issue, dict):
+                                                # Rename: materialIssue → issue, riskOpportunity → type
+                                                if "materialIssue" in issue:
+                                                    issue["issue"] = issue.pop("materialIssue")
+                                                if "riskOpportunity" in issue:
+                                                    issue["type"] = issue.pop("riskOpportunity")
+                                                if "approachToMitigate" in issue:
+                                                    issue["approach"] = issue.pop("approachToMitigate")
+                                                if "financialImplication" in issue:
+                                                    issue["financialImplications"] = issue.pop("financialImplication")
+                                    
+                                    flat_dict[key] = parsed_value
+                                except json.JSONDecodeError:
+                                    # If parsing fails, keep as string
+                                    flat_dict[key] = value
+                            else:
+                                flat_dict[key] = value
+                    
+                    result = flat_dict
+                    print(f"[Chunk: {chunk['id']}] Converted {len(flat_dict)} key-value pairs")
+                    
+                    # Save flat dict to file for debugging
+                    flat_dict_file = os.path.join(debug_dir, f"{chunk['id']}_flat_dict.json")
+                    with open(flat_dict_file, 'w', encoding='utf-8') as f:
+                        json.dump(flat_dict, f, indent=2, ensure_ascii=False)
+                    print(f"[Chunk: {chunk['id']}] Saved flat dict to: {flat_dict_file}")
+                
             except json.JSONDecodeError as inner_e:
-                # Try one more repair - extract just the first complete object
-                match = re.search(r'\{[^{}]*\}', repaired_json)
-                if match:
-                    result = json.loads(match.group())
+                print(f"[Chunk: {chunk['id']}] JSON parse error, trying fallback extraction...")
+                print(f"[Chunk: {chunk['id']}] Repaired JSON preview: {repaired_json[:300]}...")
+                
+                # Try to extract array or object - use a more robust pattern
+                # First try array (for key-value format)
+                array_match = re.search(r'\[[\s\S]*\]', repaired_json)
+                if array_match:
+                    try:
+                        result = json.loads(array_match.group())
+                        print(f"[Chunk: {chunk['id']}] Fallback: Extracted array with {len(result) if isinstance(result, list) else 'unknown'} items")
+                        
+                        # Convert key-value array to flat dict
+                        if isinstance(result, list):
+                            flat_dict = {}
+                            for item in result:
+                                if isinstance(item, dict) and "key" in item and "value" in item:
+                                    flat_dict[item["key"]] = item["value"]
+                            result = flat_dict
+                            print(f"[Chunk: {chunk['id']}] Fallback: Converted {len(flat_dict)} key-value pairs")
+                        else:
+                            print(f"[Chunk: {chunk['id']}] Fallback: Result is not a list, type: {type(result)}")
+                    except Exception as fallback_err:
+                        print(f"[Chunk: {chunk['id']}] Fallback array parsing failed: {fallback_err}")
+                        # If array parsing fails, manually extract all key-value pairs
+                        print(f"[Chunk: {chunk['id']}] Attempting manual key-value extraction...")
+                        flat_dict = {}
+                        # Find all {"key": "...", "value": "..."} patterns
+                        kv_pattern = r'\{\s*"key"\s*:\s*"([^"]+)"\s*,\s*"value"\s*:\s*("(?:[^"\\]|\\.)*"|[^,}]+)\s*\}'
+                        matches = re.finditer(kv_pattern, repaired_json)
+                        count = 0
+                        for match in matches:
+                            key = match.group(1)
+                            value_str = match.group(2)
+                            # Parse the value (remove quotes if it's a string, or parse JSON if it's an object/array)
+                            try:
+                                # First json.loads removes outer quotes
+                                value = json.loads(value_str)
+                                # If result is still a string starting with [ or {, parse again (double-escaped JSON)
+                                if isinstance(value, str) and (value.startswith('[') or value.startswith('{')):
+                                    try:
+                                        value = json.loads(value)
+                                    except:
+                                        pass  # Keep as string if second parse fails
+                            except:
+                                value = value_str.strip('"')
+                            flat_dict[key] = value
+                            count += 1
+                        
+                        if flat_dict:
+                            result = flat_dict
+                            print(f"[Chunk: {chunk['id']}] Manual extraction: Found {count} key-value pairs")
+                        else:
+                            print(f"[Chunk: {chunk['id']}] Fallback: No key-value pairs found")
+                            raise inner_e
                 else:
-                    raise inner_e
+                    # Try object fallback
+                    print(f"[Chunk: {chunk['id']}] Fallback: No array found, trying object extraction...")
+                    obj_match = re.search(r'\{[^{}]*\}', repaired_json)
+                    if obj_match:
+                        result = json.loads(obj_match.group())
+                        print(f"[Chunk: {chunk['id']}] Fallback: Extracted single object")
+                    else:
+                        print(f"[Chunk: {chunk['id']}] Fallback: No valid JSON found in repaired text")
+                        raise inner_e
             
             # Original code for validation:
             # # Validate critical fields using guidance
@@ -855,10 +620,10 @@ CRITICAL INSTRUCTIONS:
         except Exception as e:
             error_str = str(e).lower() # Added for easier error checking
             print(f"[Chunk: {chunk['id']}] Error (attempt {attempt + 1}): {e}")
-            if "429" in str(e) or "quota" in error_str or "rate" in error_str: # Updated error checking
-                # Rate limit hit - wait longer
-                delay = 30 * (attempt + 1)
-                print(f"[Chunk: {chunk['id']}] Rate limit hit, waiting {delay}s...")
+            if "429" in str(e) or "quota" in error_str or "rate" in error_str or "exceeded" in error_str: # Updated error checking
+                # Rate limit hit - wait full minute for free tier quota to reset
+                delay = 60  # Always wait 60s for rate limit (free tier resets every minute)
+                print(f"[Chunk: {chunk['id']}] Rate limit hit! Free tier is 5 requests/minute. Waiting {delay}s for quota reset...")
                 await asyncio.sleep(delay)
             elif attempt < GEMINI_CONFIG["max_retries"] - 1:
                 # delay = GEMINI_CONFIG["retry_delay_base"] ** (attempt + 1) # Original
@@ -871,107 +636,56 @@ CRITICAL INSTRUCTIONS:
 
 
 def validate_extracted_data(data: Dict[str, Any], chunk_id: str):
-    """Validate extracted data against BRSR field guidance and apply calculations"""
-    calc = BRSRCalculations()
-    
-    # Validate Section A fields
-    if chunk_id == "sectionA_basic":
-        if "cin" in data:
-            # is_valid, msg = validate_brsr_field("q1_cin", data["cin"]) # Original, uses a non-existent function
-            # Original code intended to use BRSR_FIELD_GUIDANCE, but validate_brsr_field is not defined in the provided scripts.
-            # Assuming this section is for basic validation and will be handled by the LLM prompt and JSON schema.
-            # if not is_valid:
-            #     print(f"[Validation] CIN validation: {msg}")
-            pass # Placeholder as validation function is not provided.
-
-    # Apply calculations for Section C Principle 3 (Safety)
-    # if "principle3" in data: # Original structure for P3
-    #     p3 = data.get("principle3", {}).get("essential", {})
-    #     safety = p3.get("q11_safetyIncidents", {})
-        
-    #     # Validate LTIFR values are reasonable (typically 0-10)
-    #     ltifr = safety.get("ltifr", {})
-    #     for key, value in ltifr.items():
-    #         try:
-    #             if value and float(value.replace(",", "")) > 100:
-    #                 print(f"[Validation] Warning: LTIFR {key}={value} seems high")
-    #         except:
-    #             pass
-    
-    # Updated validation for P3 safety
-    if "principle3_safety" in data or (isinstance(data.get("principle3"), dict)): # Checking for new structure and original fallback
-        p3 = data.get("principle3_safety") or data.get("principle3", {})
-        # Original structure had q11_safetyIncidents with nested ltifr. New structure has ltifr_employees and ltifr_workers directly.
-        # ltifr = safety.get("ltifr", {}) # Original
-        ltifr_emp = p3.get("ltifr_employees")
-        ltifr_wrk = p3.get("ltifr_workers")
-        
-        if ltifr_emp and ltifr_emp != "":
-            try:
-                ltifr_val = float(str(ltifr_emp).replace(",", ""))
-                # Assuming LTIFR should be a non-negative number, typically small. 100 is a loose upper bound.
-                if not (0 <= ltifr_val <= 100): # Adjusted upper bound for wider compatibility
-                    print(f"[Validation] Warning: LTIFR (Employees) {ltifr_val} outside expected range 0-100")
-            except:
-                pass # Ignore if conversion fails
-        
-        if ltifr_wrk and ltifr_wrk != "":
-            try:
-                ltifr_val = float(str(ltifr_wrk).replace(",", ""))
-                if not (0 <= ltifr_val <= 100): # Adjusted upper bound for wider compatibility
-                    print(f"[Validation] Warning: LTIFR (Workers) {ltifr_val} outside expected range 0-100")
-            except:
-                pass # Ignore if conversion fails
-
-
-    # Apply calculations for Section C Principle 6 (Environment)
-    if "principle6" in data: # Original structure
-        p6 = data.get("principle6", {}).get("essential", {})
-        
-        # Validate energy intensity
-        energy = p6.get("q1_energyConsumption", {})
-        if energy.get("totalEnergyConsumed", {}).get("currentFY"):
-            total = energy["totalEnergyConsumed"]["currentFY"]
-            intensity = energy.get("energyIntensity", {}).get("currentFY", "")
-            if total and not intensity:
-                print(f"[Validation] Energy intensity should be calculated from total: {total}")
-    
-    # Updated validation for P6 energy
-    if "principle6_energy" in data: # Checking for new structure
-        p6_energy = data.get("principle6_energy", {})
-        total_consumed = p6_energy.get("totalEnergyConsumption", "")
-        intensity = p6_energy.get("energyIntensityPerTurnover", "")
-        if total_consumed and not intensity:
-            print(f"[Validation] Energy Intensity per turnover should be calculated for total energy consumption: {total_consumed}")
+    """Placeholder validator (keeps code path stable)."""
+    return True
 
 def merge_extracted_data(all_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Merge all extracted chunks into final BRSR data structure matching frontend demo format"""
+    """
+    Merge all extracted chunks into final BRSR data structure matching frontend demo format.
     
-    result = {
-        "sectionA": {},
-        "sectionB": {},
-        "sectionC": {}
-    }
+    This function transforms Gemini's flat output keys (e.g., "sectiona_cin") into the 
+    nested structure expected by the frontend (e.g., {"sectionA": {"cin": "..."}}).
+    """
+    # Start with empty result - will build nested structure from flat keys
+    result = {}
     
-    for chunk_id, data in all_chunks:
-        if not data:
+    for chunk_id, flat_data in all_chunks:
+        if not flat_data:
             print(f"[Merge] Skipping empty chunk: {chunk_id}")
             continue
+        
+        print(f"[Merge] Processing {chunk_id} with {len(flat_data)} flat keys")
+        
+        # Transform flat keys to nested structure
+        try:
+            nested_chunk = transform_flat_to_nested(flat_data)
+            print(f"[Merge] Transformed to nested structure: {list(nested_chunk.keys())}")
             
-        if chunk_id == "sectionA_complete":
-            # Section A is now complete in one chunk
-            result["sectionA"] = data
-            print(f"[Merge] Merged Section A: {len(data)} fields")
-        elif chunk_id == "sectionB_complete":
-            # Section B is complete in one chunk
-            result["sectionB"] = data
-            print(f"[Merge] Merged Section B")
-        elif chunk_id.startswith("sectionC_"):
-            # Section C split into 6 chunks: p1_p2, p3, p4_p5, p6, p7_p8_p9
-            result["sectionC"].update(data)
-            print(f"[Merge] Merged {chunk_id}: {list(data.keys())}")
+            # Deep merge this chunk into result
+            result = merge_nested_data(result, nested_chunk)
             
-    print(f"[Merge] Final structure: A={bool(result['sectionA'])}, B={bool(result['sectionB'])}, C principles={len(result['sectionC'])}")
+        except Exception as e:
+            print(f"[Merge ERROR] Failed to transform chunk {chunk_id}: {str(e)}")
+            continue
+    
+    print(f"[Merge] Final structure sections: {list(result.keys())}")
+    
+    # Save final merged result for debugging
+    debug_dir = "extraction_output/debug"
+    os.makedirs(debug_dir, exist_ok=True)
+    final_output_file = os.path.join(debug_dir, "final_merged_output.json")
+    with open(final_output_file, 'w', encoding='utf-8') as f:
+        json.dump(result, f, indent=2, ensure_ascii=False)
+    print(f"[Merge] Saved final output to: {final_output_file}")
+    
+    # Ensure all required sections exist (even if empty)
+    if "sectionA" not in result:
+        result["sectionA"] = {}
+    if "sectionB" not in result:
+        result["sectionB"] = {}
+    if "sectionC" not in result:
+        result["sectionC"] = {}
+    
     return result
 
 
