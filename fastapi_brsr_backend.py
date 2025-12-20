@@ -84,10 +84,11 @@ GEMINI_CONFIG = {
     "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
     "max_retries": 3,
     "retry_delay_base": 2,
-    "delay_between_chunks": 15,  # Increased to 15s for free tier (5 req/min = 12s minimum)
+    "delay_between_chunks": 1,  # Minimal delay for paid tier (360 req/min)
     "max_input_tokens": 30000,
-    "max_output_tokens": 32768,  # Doubled to 32K for Section C P3-4 (200+ fields)
-    "requests_per_minute": 5,  # Free tier limit is 5/min, not 10
+    "max_output_tokens": 32768,
+    "requests_per_minute": 360,  # Paid tier: 360 requests/min
+    "enable_parallel_processing": True,  # Set to False to revert to sequential
 }
 
 _rate_tracker: Dict[str, Any] = {"requests": [], "last_reset": time.time()}
@@ -237,31 +238,16 @@ def get_extraction_chunks() -> List[Dict[str, Any]]:
     p5p6 = create_principles_5_6_agent()["prompt"]
     p7p8p9 = create_principles_7_8_9_agent()["prompt"]
 
-    # TESTING MODE: Uncomment chunks one by one to test and debug
-    # FREE TIER: 5 requests/minute = minimum 12s between chunks (using 15s to be safe)
+    # PAID TIER MODE: All chunks enabled with minimal delays for parallel processing
+    # Parallel processing: All chunks run simultaneously (360 req/min limit)
     return [
-        # Step 1: Test Section A first
-        {"id": "sectionA_complete", "name": "Section A: Complete Company Information", "delay_seconds": 15, "prompt": secA},
-        
-        # Step 2: After Section A works, uncomment Section B
-        # {"id": "sectionB_complete", "name": "Section B: Policies and Governance", "delay_seconds": 15, "prompt": secB},
-        
-        # Step 3: Uncomment Section C chunks one by one
-        # {"id": "sectionC_p1_p2", "name": "Section C: Principles 1-2", "delay_seconds": 15, "prompt": p1p2},
-        # {"id": "sectionC_p3_p4", "name": "Section C: Principles 3-4", "delay_seconds": 15, "prompt": p3p4},
-        # {"id": "sectionC_p5_p6", "name": "Section C: Principles 5-6", "delay_seconds": 15, "prompt": p5p6},
-        # {"id": "sectionC_p7_p8_p9", "name": "Section C: Principles 7-9", "delay_seconds": 15, "prompt": p7p8p9},
+        {"id": "sectionA_complete", "name": "Section A: Complete Company Information", "delay_seconds": 1, "prompt": secA},
+        {"id": "sectionB_complete", "name": "Section B: Policies and Governance", "delay_seconds": 1, "prompt": secB},
+        {"id": "sectionC_p1_p2", "name": "Section C: Principles 1-2", "delay_seconds": 1, "prompt": p1p2},
+        {"id": "sectionC_p3_p4", "name": "Section C: Principles 3-4", "delay_seconds": 1, "prompt": p3p4},
+        {"id": "sectionC_p5_p6", "name": "Section C: Principles 5-6", "delay_seconds": 1, "prompt": p5p6},
+        {"id": "sectionC_p7_p8_p9", "name": "Section C: Principles 7-9", "delay_seconds": 1, "prompt": p7p8p9},
     ]
-    
-    # PRODUCTION MODE: Uncomment this when all chunks are working
-    # return [
-    #     {"id": "sectionA_complete", "name": "Section A: Complete Company Information", "delay_seconds": 8, "prompt": secA},
-    #     {"id": "sectionB_complete", "name": "Section B: Policies and Governance", "delay_seconds": 6, "prompt": secB},
-    #     {"id": "sectionC_p1_p2", "name": "Section C: Principles 1-2", "delay_seconds": 6, "prompt": p1p2},
-    #     {"id": "sectionC_p3_p4", "name": "Section C: Principles 3-4", "delay_seconds": 6, "prompt": p3p4},
-    #     {"id": "sectionC_p5_p6", "name": "Section C: Principles 5-6", "delay_seconds": 6, "prompt": p5p6},
-    #     {"id": "sectionC_p7_p8_p9", "name": "Section C: Principles 7-9", "delay_seconds": 6, "prompt": p7p8p9},
-    # ]
 
 
 def extract_text_from_pdf(file_content: bytes) -> str:
@@ -305,30 +291,7 @@ async def extract_chunk_with_gemini(text: str, chunk: Dict[str, Any]) -> Dict[st
 # The robust `validate_extracted_data` and `merge_extracted_data` implementations
 # appear later in the file and will be used at runtime.
 
-
-@app.post("/api/extract")
-async def extract_brsr_data(file: UploadFile = File(...)):
-    filename = file.filename.lower()
-    if not any(filename.endswith(ext) for ext in [".pdf", ".xlsx", ".xls"]):
-        raise HTTPException(status_code=400, detail="Only PDF and Excel files are supported")
-
-    content = await file.read()
-    text = extract_text_from_pdf(content) if filename.endswith('.pdf') else extract_text_from_excel(content)
-
-    chunks = get_extraction_chunks()
-    results = []
-    failed = []
-    for ch in chunks:
-        try:
-            res = await extract_chunk_with_gemini(text, ch)
-            results.append((ch['id'], res))
-            await asyncio.sleep(ch.get('delay_seconds', GEMINI_CONFIG['delay_between_chunks']))
-        except Exception:
-            results.append((ch['id'], {}))
-            failed.append(ch['id'])
-
-    merged = merge_extracted_data(results)
-    return {"success": True, "data": merged, "failed_chunks": failed}
+# REMOVED OLD SEQUENTIAL-ONLY ENDPOINT - Using new parallel-capable endpoint at line ~678
 
 
 if __name__ == '__main__':
@@ -723,38 +686,75 @@ async def extract_brsr_data(file: UploadFile = File(...)):
     all_chunk_results = []
     failed_chunks = []
     
-    # Process each chunk sequentially with proper rate limiting
-    for i, chunk in enumerate(chunks):
-        print(f"\n[Progress] Processing chunk {i+1}/{len(chunks)}: {chunk['name']}")
+    # Check if parallel processing is enabled
+    if GEMINI_CONFIG.get("enable_parallel_processing", True):
+        print(f"\n[Parallel Mode] Processing {len(chunks)} chunks simultaneously...")
         
-        try:
-            chunk_data = await extract_chunk_with_gemini(text, chunk)
-            all_chunk_results.append((chunk["id"], chunk_data))
-            
-            # Save individual chunk result to JSON file
-            chunk_file = f"{output_dir}/chunk_{i+1}_{chunk['id']}.json"
-            with open(chunk_file, 'w', encoding='utf-8') as f:
-                json.dump({
-                    "chunk_id": chunk["id"],
-                    "chunk_name": chunk["name"],
-                    "timestamp": timestamp,
-                    "data": chunk_data
-                }, f, indent=2, ensure_ascii=False)
-            print(f"[Saved] {chunk_file}")
-            
-            if not chunk_data:
-                failed_chunks.append(chunk['name'])
-            
-            # Delay between chunks
-            if i < len(chunks) - 1:
-                delay = chunk.get("delay_seconds", GEMINI_CONFIG["delay_between_chunks"])
-                print(f"[Delay] Waiting {delay}s before next chunk...")
-                await asyncio.sleep(delay)
+        # Process all chunks in parallel using asyncio.gather
+        async def process_chunk_wrapper(i, chunk):
+            try:
+                print(f"[Started] Chunk {i+1}/{len(chunks)}: {chunk['name']}")
+                chunk_data = await extract_chunk_with_gemini(text, chunk)
                 
-        except Exception as e:
-            print(f"[Error] Chunk {chunk['id']} failed: {e}")
-            failed_chunks.append(chunk['name'])
-            all_chunk_results.append((chunk["id"], {}))
+                # Save individual chunk result
+                chunk_file = f"{output_dir}/chunk_{i+1}_{chunk['id']}.json"
+                with open(chunk_file, 'w', encoding='utf-8') as f:
+                    json.dump({
+                        "chunk_id": chunk["id"],
+                        "chunk_name": chunk["name"],
+                        "timestamp": timestamp,
+                        "data": chunk_data
+                    }, f, indent=2, ensure_ascii=False)
+                print(f"[Completed] Chunk {i+1}: {chunk['name']} - Saved to {chunk_file}")
+                
+                return (chunk["id"], chunk_data, chunk['name'] if not chunk_data else None)
+            except Exception as e:
+                print(f"[Error] Chunk {i+1} ({chunk['id']}) failed: {e}")
+                return (chunk["id"], {}, chunk['name'])
+        
+        # Run all chunks in parallel
+        results = await asyncio.gather(*[process_chunk_wrapper(i, chunk) for i, chunk in enumerate(chunks)])
+        
+        # Process results
+        for chunk_id, chunk_data, failed_name in results:
+            all_chunk_results.append((chunk_id, chunk_data))
+            if failed_name:
+                failed_chunks.append(failed_name)
+    
+    else:
+        # Sequential processing (original behavior)
+        print(f"\n[Sequential Mode] Processing {len(chunks)} chunks one by one...")
+        for i, chunk in enumerate(chunks):
+            print(f"\n[Progress] Processing chunk {i+1}/{len(chunks)}: {chunk['name']}")
+            
+            try:
+                chunk_data = await extract_chunk_with_gemini(text, chunk)
+                all_chunk_results.append((chunk["id"], chunk_data))
+                
+                # Save individual chunk result to JSON file
+                chunk_file = f"{output_dir}/chunk_{i+1}_{chunk['id']}.json"
+                with open(chunk_file, 'w', encoding='utf-8') as f:
+                    json.dump({
+                        "chunk_id": chunk["id"],
+                        "chunk_name": chunk["name"],
+                        "timestamp": timestamp,
+                        "data": chunk_data
+                    }, f, indent=2, ensure_ascii=False)
+                print(f"[Saved] {chunk_file}")
+                
+                if not chunk_data:
+                    failed_chunks.append(chunk['name'])
+                
+                # Delay between chunks
+                if i < len(chunks) - 1:
+                    delay = chunk.get("delay_seconds", GEMINI_CONFIG["delay_between_chunks"])
+                    print(f"[Delay] Waiting {delay}s before next chunk...")
+                    await asyncio.sleep(delay)
+                    
+            except Exception as e:
+                print(f"[Error] Chunk {chunk['id']} failed: {e}")
+                failed_chunks.append(chunk['name'])
+                all_chunk_results.append((chunk["id"], {}))
     
     # Merge all chunks
     extracted_data = merge_extracted_data(all_chunk_results)
