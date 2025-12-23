@@ -153,54 +153,160 @@ BRSR_DATA_SKELETON: Dict[str, Any] = {
             "p1": {
                 "hasPolicy": "sectionb_policymatrix_p1_hasPolicy",
                 "approvedByBoard": "sectionb_policymatrix_p1_approvedByBoard",
-                "webLink": "sectionb_policymatrix_p1_webLink"
+                "webLink": "sectionb_policymatrix_p1_webLink",
+                "translatedToProcedures": "sectionb_policymatrix_p1_translatedToProcedures"
             },
             "p2": {
                 "hasPolicy": "sectionb_policymatrix_p2_hasPolicy",
                 "approvedByBoard": "sectionb_policymatrix_p2_approvedByBoard",
-                "webLink": "sectionb_policymatrix_p2_webLink"
+                "webLink": "sectionb_policymatrix_p2_webLink",
+                "translatedToProcedures": "sectionb_policymatrix_p2_translatedToProcedures"
             },
             "p3": {
                 "hasPolicy": "sectionb_policymatrix_p3_hasPolicy",
                 "approvedByBoard": "sectionb_policymatrix_p3_approvedByBoard",
-                "webLink": "sectionb_policymatrix_p3_webLink"
+                "webLink": "sectionb_policymatrix_p3_webLink",
+                "translatedToProcedures": "sectionb_policymatrix_p3_translatedToProcedures"
             },
             "p4": {
                 "hasPolicy": "sectionb_policymatrix_p4_hasPolicy",
                 "approvedByBoard": "sectionb_policymatrix_p4_approvedByBoard",
-                "webLink": "sectionb_policymatrix_p4_webLink"
+                "webLink": "sectionb_policymatrix_p4_webLink",
+                "translatedToProcedures": "sectionb_policymatrix_p4_translatedToProcedures"
             },
             "p5": {
                 "hasPolicy": "sectionb_policymatrix_p5_hasPolicy",
                 "approvedByBoard": "sectionb_policymatrix_p5_approvedByBoard",
-                "webLink": "sectionb_policymatrix_p5_webLink"
+                "webLink": "sectionb_policymatrix_p5_webLink",
+                "translatedToProcedures": "sectionb_policymatrix_p5_translatedToProcedures"
             },
             "p6": {
                 "hasPolicy": "sectionb_policymatrix_p6_hasPolicy",
                 "approvedByBoard": "sectionb_policymatrix_p6_approvedByBoard",
-                "webLink": "sectionb_policymatrix_p6_webLink"
+                "webLink": "sectionb_policymatrix_p6_webLink",
+                "translatedToProcedures": "sectionb_policymatrix_p6_translatedToProcedures"
             },
             "p7": {
                 "hasPolicy": "sectionb_policymatrix_p7_hasPolicy",
                 "approvedByBoard": "sectionb_policymatrix_p7_approvedByBoard",
-                "webLink": "sectionb_policymatrix_p7_webLink"
+                "webLink": "sectionb_policymatrix_p7_webLink",
+                "translatedToProcedures": "sectionb_policymatrix_p7_translatedToProcedures"
             },
             "p8": {
                 "hasPolicy": "sectionb_policymatrix_p8_hasPolicy",
                 "approvedByBoard": "sectionb_policymatrix_p8_approvedByBoard",
-                "webLink": "sectionb_policymatrix_p8_webLink"
+                "webLink": "sectionb_policymatrix_p8_webLink",
+                "translatedToProcedures": "sectionb_policymatrix_p8_translatedToProcedures"
             },
             "p9": {
                 "hasPolicy": "sectionb_policymatrix_p9_hasPolicy",
                 "approvedByBoard": "sectionb_policymatrix_p9_approvedByBoard",
-                "webLink": "sectionb_policymatrix_p9_webLink"
+                "webLink": "sectionb_policymatrix_p9_webLink",
+                "translatedToProcedures": "sectionb_policymatrix_p9_translatedToProcedures"
             }
         },
-        "governance": {
-            "directorStatement": "sectionb_governance_directorStatement",
-            "frequencyReview": "sectionb_governance_frequencyReview",
-            "chiefResponsibility": "sectionb_governance_chiefResponsibility",
-            "weblink": "sectionb_governance_weblink"
+        
+        "policyWebLink": "sectionb_policyWebLink",
+        "valueChainExtension": "sectionb_valueChainExtension",
+        "certifications": "sectionb_certifications",
+        "commitments": "sectionb_commitments",
+        "performance": "sectionb_performance",
+        "directorStatement": "sectionb_directorStatement",
+        
+        "highestAuthority": {
+            "name": "sectionb_highestAuthority_name",
+            "designation": "sectionb_highestAuthority_designation",
+            "din": "sectionb_highestAuthority_din",
+            "email": "sectionb_highestAuthority_email",
+            "phone": "sectionb_highestAuthority_phone"
+        },
+        
+        "sustainabilityCommittee": "sectionb_sustainabilityCommittee",
+        
+        "review": {
+            "performance": {
+                "p1": "sectionb_review_performance_p1",
+                "p2": "sectionb_review_performance_p2",
+                "p3": "sectionb_review_performance_p3",
+                "p4": "sectionb_review_performance_p4",
+                "p5": "sectionb_review_performance_p5",
+                "p6": "sectionb_review_performance_p6",
+                "p7": "sectionb_review_performance_p7",
+                "p8": "sectionb_review_performance_p8",
+                "p9": "sectionb_review_performance_p9"
+            },
+            "performanceFrequency": "sectionb_review_performanceFrequency",
+            "compliance": "sectionb_review_compliance"
+        },
+        
+        "independentAssessment": {
+            "p1": "sectionb_independentAssessment_p1",
+            "p2": "sectionb_independentAssessment_p2",
+            "p3": "sectionb_independentAssessment_p3",
+            "p4": "sectionb_independentAssessment_p4",
+            "p5": "sectionb_independentAssessment_p5",
+            "p6": "sectionb_independentAssessment_p6",
+            "p7": "sectionb_independentAssessment_p7",
+            "p8": "sectionb_independentAssessment_p8",
+            "p9": "sectionb_independentAssessment_p9"
+        },
+        
+        "noPolicyReasons": {
+            "notMaterial": {
+                "p1": "sectionb_noPolicyReasons_notMaterial_p1",
+                "p2": "sectionb_noPolicyReasons_notMaterial_p2",
+                "p3": "sectionb_noPolicyReasons_notMaterial_p3",
+                "p4": "sectionb_noPolicyReasons_notMaterial_p4",
+                "p5": "sectionb_noPolicyReasons_notMaterial_p5",
+                "p6": "sectionb_noPolicyReasons_notMaterial_p6",
+                "p7": "sectionb_noPolicyReasons_notMaterial_p7",
+                "p8": "sectionb_noPolicyReasons_notMaterial_p8",
+                "p9": "sectionb_noPolicyReasons_notMaterial_p9"
+            },
+            "notReady": {
+                "p1": "sectionb_noPolicyReasons_notReady_p1",
+                "p2": "sectionb_noPolicyReasons_notReady_p2",
+                "p3": "sectionb_noPolicyReasons_notReady_p3",
+                "p4": "sectionb_noPolicyReasons_notReady_p4",
+                "p5": "sectionb_noPolicyReasons_notReady_p5",
+                "p6": "sectionb_noPolicyReasons_notReady_p6",
+                "p7": "sectionb_noPolicyReasons_notReady_p7",
+                "p8": "sectionb_noPolicyReasons_notReady_p8",
+                "p9": "sectionb_noPolicyReasons_notReady_p9"
+            },
+            "noResources": {
+                "p1": "sectionb_noPolicyReasons_noResources_p1",
+                "p2": "sectionb_noPolicyReasons_noResources_p2",
+                "p3": "sectionb_noPolicyReasons_noResources_p3",
+                "p4": "sectionb_noPolicyReasons_noResources_p4",
+                "p5": "sectionb_noPolicyReasons_noResources_p5",
+                "p6": "sectionb_noPolicyReasons_noResources_p6",
+                "p7": "sectionb_noPolicyReasons_noResources_p7",
+                "p8": "sectionb_noPolicyReasons_noResources_p8",
+                "p9": "sectionb_noPolicyReasons_noResources_p9"
+            },
+            "plannedNextYear": {
+                "p1": "sectionb_noPolicyReasons_plannedNextYear_p1",
+                "p2": "sectionb_noPolicyReasons_plannedNextYear_p2",
+                "p3": "sectionb_noPolicyReasons_plannedNextYear_p3",
+                "p4": "sectionb_noPolicyReasons_plannedNextYear_p4",
+                "p5": "sectionb_noPolicyReasons_plannedNextYear_p5",
+                "p6": "sectionb_noPolicyReasons_plannedNextYear_p6",
+                "p7": "sectionb_noPolicyReasons_plannedNextYear_p7",
+                "p8": "sectionb_noPolicyReasons_plannedNextYear_p8",
+                "p9": "sectionb_noPolicyReasons_plannedNextYear_p9"
+            },
+            "otherReason": {
+                "p1": "sectionb_noPolicyReasons_otherReason_p1",
+                "p2": "sectionb_noPolicyReasons_otherReason_p2",
+                "p3": "sectionb_noPolicyReasons_otherReason_p3",
+                "p4": "sectionb_noPolicyReasons_otherReason_p4",
+                "p5": "sectionb_noPolicyReasons_otherReason_p5",
+                "p6": "sectionb_noPolicyReasons_otherReason_p6",
+                "p7": "sectionb_noPolicyReasons_otherReason_p7",
+                "p8": "sectionb_noPolicyReasons_otherReason_p8",
+                "p9": "sectionb_noPolicyReasons_otherReason_p9"
+            }
         }
     },
 

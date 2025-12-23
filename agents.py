@@ -46,6 +46,9 @@ def create_sectionA_agent() -> Dict[str, str]:
         "sectiona_nationalPlants, sectiona_nationalOffices, sectiona_internationalPlants, sectiona_internationalOffices, "
         "sectiona_nationalStates, sectiona_internationalCountries, sectiona_exportContribution\n\n"
         "IV. Employees (Q20-Q22):\n"
+        "NOTE: Contact details (contactName, contactDesignation, contactPhone, contactEmail), reportingBoundary, "
+        "employee counts, worker counts, and turnover rates may be provided by user via frontend form. "
+        "If you find these fields in the document, extract them normally - they will be merged with user inputs later.\n"
         "sectiona_employees_permanent_male, sectiona_employees_permanent_female, sectiona_employees_permanent_total, "
         "sectiona_employees_otherthanpermanent_male, sectiona_employees_otherthanpermanent_female, sectiona_employees_otherthanpermanent_total, "
         "sectiona_workers_permanent_male, sectiona_workers_permanent_female, sectiona_workers_permanent_total, "
@@ -87,7 +90,9 @@ def create_sectionA_agent() -> Dict[str, str]:
 
 
 def create_sectionB_agent() -> Dict[str, str]:
-    """Return prompt payload for Section B extraction using simple key-value array format."""
+    """Return prompt payload for Section B extraction using simple key-value array format.
+    Note: Only extracts ALL Section B fields from PDF. Manual input form only allows Policy Matrix + policyWebLink.
+    """
     role = "BRSR Section B Extraction Specialist"
     goal = "Extract Section B governance & policy fields and return a JSON array of key-value pairs"
     prompt = (
@@ -99,26 +104,68 @@ def create_sectionB_agent() -> Dict[str, str]:
         "- If a value is absent, use null or empty string\n"
         "- Do NOT add commentary or explanations\n"
         "- Output MUST be valid JSON array\n"
-        "- For Yes/No fields, use 'Yes' or 'No' strings\n"
+        "- For Yes/No fields, use 'Y' or 'N' strings\n"
         "- For URLs, return full http/https link\n"
         "- Do NOT wrap output in markdown code blocks (no ``` or ```json)\n\n"
-        "Fields to extract (Policy Matrix for Principles 1-9):\n"
-        "sectionb_policymatrix_p1_hasPolicy, sectionb_policymatrix_p1_approvedByBoard, sectionb_policymatrix_p1_webLink, "
-        "sectionb_policymatrix_p2_hasPolicy, sectionb_policymatrix_p2_approvedByBoard, sectionb_policymatrix_p2_webLink, "
-        "sectionb_policymatrix_p3_hasPolicy, sectionb_policymatrix_p3_approvedByBoard, sectionb_policymatrix_p3_webLink, "
-        "sectionb_policymatrix_p4_hasPolicy, sectionb_policymatrix_p4_approvedByBoard, sectionb_policymatrix_p4_webLink, "
-        "sectionb_policymatrix_p5_hasPolicy, sectionb_policymatrix_p5_approvedByBoard, sectionb_policymatrix_p5_webLink, "
-        "sectionb_policymatrix_p6_hasPolicy, sectionb_policymatrix_p6_approvedByBoard, sectionb_policymatrix_p6_webLink, "
-        "sectionb_policymatrix_p7_hasPolicy, sectionb_policymatrix_p7_approvedByBoard, sectionb_policymatrix_p7_webLink, "
-        "sectionb_policymatrix_p8_hasPolicy, sectionb_policymatrix_p8_approvedByBoard, sectionb_policymatrix_p8_webLink, "
-        "sectionb_policymatrix_p9_hasPolicy, sectionb_policymatrix_p9_approvedByBoard, sectionb_policymatrix_p9_webLink, "
-        "sectionb_governance_directorStatement, sectionb_governance_frequencyReview, "
-        "sectionb_governance_chiefResponsibility, sectionb_governance_weblink\n\n"
+        "SECTION B: MANAGEMENT AND PROCESS DISCLOSURES\n\n"
+        "Q1. Policy and management processes - Policy Matrix (P1-P9):\n"
+        "For each principle (P1-P9), extract:\n"
+        "- hasPolicy: Whether policy covers this principle (Y/N)\n"
+        "- approvedByBoard: Whether approved by Board (Y/N)\n"
+        "- webLink: URL if available\n"
+        "- translatedToProcedures: Whether policy translated to procedures (Y/N)\n\n"
+        "Fields:\n"
+        "sectionb_policymatrix_p1_hasPolicy, sectionb_policymatrix_p1_approvedByBoard, sectionb_policymatrix_p1_webLink, sectionb_policymatrix_p1_translatedToProcedures, "
+        "sectionb_policymatrix_p2_hasPolicy, sectionb_policymatrix_p2_approvedByBoard, sectionb_policymatrix_p2_webLink, sectionb_policymatrix_p2_translatedToProcedures, "
+        "sectionb_policymatrix_p3_hasPolicy, sectionb_policymatrix_p3_approvedByBoard, sectionb_policymatrix_p3_webLink, sectionb_policymatrix_p3_translatedToProcedures, "
+        "sectionb_policymatrix_p4_hasPolicy, sectionb_policymatrix_p4_approvedByBoard, sectionb_policymatrix_p4_webLink, sectionb_policymatrix_p4_translatedToProcedures, "
+        "sectionb_policymatrix_p5_hasPolicy, sectionb_policymatrix_p5_approvedByBoard, sectionb_policymatrix_p5_webLink, sectionb_policymatrix_p5_translatedToProcedures, "
+        "sectionb_policymatrix_p6_hasPolicy, sectionb_policymatrix_p6_approvedByBoard, sectionb_policymatrix_p6_webLink, sectionb_policymatrix_p6_translatedToProcedures, "
+        "sectionb_policymatrix_p7_hasPolicy, sectionb_policymatrix_p7_approvedByBoard, sectionb_policymatrix_p7_webLink, sectionb_policymatrix_p7_translatedToProcedures, "
+        "sectionb_policymatrix_p8_hasPolicy, sectionb_policymatrix_p8_approvedByBoard, sectionb_policymatrix_p8_webLink, sectionb_policymatrix_p8_translatedToProcedures, "
+        "sectionb_policymatrix_p9_hasPolicy, sectionb_policymatrix_p9_approvedByBoard, sectionb_policymatrix_p9_webLink, sectionb_policymatrix_p9_translatedToProcedures\n\n"
+        "Q1c. Web Link of Policies:\n"
+        "sectionb_policyWebLink (general policy web link text/URL)\n\n"
+        "Q3. Value Chain Extension:\n"
+        "sectionb_valueChainExtension (text describing if policies extend to value chain)\n\n"
+        "Q4. Certifications:\n"
+        "sectionb_certifications (comma-separated list of standards/certifications like ISO, GOTS, etc.)\n\n"
+        "Q5. Commitments:\n"
+        "sectionb_commitments (specific commitments, goals and targets with timelines)\n\n"
+        "Q6. Performance:\n"
+        "sectionb_performance (performance against commitments)\n\n"
+        "Q7. Director Statement:\n"
+        "sectionb_directorStatement (statement by director on ESG challenges/targets)\n\n"
+        "Q8. Highest Authority:\n"
+        "sectionb_highestAuthority_name, sectionb_highestAuthority_designation, sectionb_highestAuthority_din, "
+        "sectionb_highestAuthority_email, sectionb_highestAuthority_phone\n\n"
+        "Q9. Sustainability Committee:\n"
+        "sectionb_sustainabilityCommittee (details of committee responsible for sustainability)\n\n"
+        "Q10. Review of NGRBCs:\n"
+        "sectionb_review_performance_p1, sectionb_review_performance_p2, sectionb_review_performance_p3, "
+        "sectionb_review_performance_p4, sectionb_review_performance_p5, sectionb_review_performance_p6, "
+        "sectionb_review_performance_p7, sectionb_review_performance_p8, sectionb_review_performance_p9, "
+        "sectionb_review_performanceFrequency (frequency of review - Annually/Quarterly/etc.), "
+        "sectionb_review_compliance (compliance review details)\n\n"
+        "Q11. Independent Assessment (P1-P9):\n"
+        "sectionb_independentAssessment_p1, sectionb_independentAssessment_p2, sectionb_independentAssessment_p3, "
+        "sectionb_independentAssessment_p4, sectionb_independentAssessment_p5, sectionb_independentAssessment_p6, "
+        "sectionb_independentAssessment_p7, sectionb_independentAssessment_p8, sectionb_independentAssessment_p9\n\n"
+        "Q12. No Policy Reasons (if answer to Q1 is No):\n"
+        "For each principle, extract reason why policy is not covered:\n"
+        "sectionb_noPolicyReasons_notMaterial_p1 through p9 (not material to business - Y/N),\n"
+        "sectionb_noPolicyReasons_notReady_p1 through p9 (not ready to formulate - Y/N),\n"
+        "sectionb_noPolicyReasons_noResources_p1 through p9 (no resources - Y/N),\n"
+        "sectionb_noPolicyReasons_plannedNextYear_p1 through p9 (planned next year - Y/N),\n"
+        "sectionb_noPolicyReasons_otherReason_p1 through p9 (other reason text)\n\n"
         "Example output format:\n"
         '[\n'
-        '  {"key": "sectionb_policymatrix_p1_hasPolicy", "value": "Yes"},\n'
-        '  {"key": "sectionb_policymatrix_p1_approvedByBoard", "value": "Yes"},\n'
-        '  {"key": "sectionb_policymatrix_p1_webLink", "value": "https://example.com/policy"}\n'
+        '  {"key": "sectionb_policymatrix_p1_hasPolicy", "value": "Y"},\n'
+        '  {"key": "sectionb_policymatrix_p1_approvedByBoard", "value": "Y"},\n'
+        '  {"key": "sectionb_policymatrix_p1_webLink", "value": "https://example.com/policy"},\n'
+        '  {"key": "sectionb_policyWebLink", "value": "Various policies available at https://example.com"},\n'
+        '  {"key": "sectionb_valueChainExtension", "value": "Yes, policies extend to suppliers"},\n'
+        '  {"key": "sectionb_directorStatement", "value": "Full statement text..."}\n'
         ']\n'
     )
     return {"role": role, "goal": goal, "prompt": prompt}
