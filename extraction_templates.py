@@ -34,11 +34,11 @@ SECTION_A_TEMPLATE = {
     "customers": [],
     "employees": {
         "permanent": {"male": 0, "female": 0, "total": 0},
-        "other": {"male": 0, "female": 0, "total": 0}
+        "otherThanPermanent": {"male": 0, "female": 0, "total": 0}
     },
     "workers": {
         "permanent": {"male": 0, "female": 0, "total": 0},
-        "other": {"male": 0, "female": 0, "total": 0}
+        "otherThanPermanent": {"male": 0, "female": 0, "total": 0}
     },
     "participationDiversityArea": {
         "board": {"total": 0, "female": 0, "percent": ""},
@@ -51,7 +51,7 @@ SECTION_A_TEMPLATE = {
                 "female": {"current": "", "previous": ""},
                 "total": {"current": "", "previous": ""}
             },
-            "other": {
+            "otherThanPermanent": {
                 "male": {"current": "", "previous": ""},
                 "female": {"current": "", "previous": ""},
                 "total": {"current": "", "previous": ""}
@@ -63,7 +63,7 @@ SECTION_A_TEMPLATE = {
                 "female": {"current": "", "previous": ""},
                 "total": {"current": "", "previous": ""}
             },
-            "other": {
+            "otherThanPermanent": {
                 "male": {"current": "", "previous": ""},
                 "female": {"current": "", "previous": ""},
                 "total": {"current": "", "previous": ""}

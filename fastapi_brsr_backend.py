@@ -19,7 +19,7 @@ import time
 import asyncio
 from typing import Dict, Any, List
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -341,27 +341,19 @@ async def extract_chunk_with_gemini(text: str, chunk: Dict[str, Any], manual_dat
         chunk: Extraction chunk configuration
         manual_data: Optional manual Section A data from frontend that AI can validate/correct
         manual_data_b: Optional manual Section B data (Policy Matrix + policyWebLink) that AI can use as context
-        manual_data_cp1: Optional manual Section C P1 data that AI should expand/elaborate
-        manual_data_cp2: Optional manual Section C P2 data that AI should expand/elaborate
     """
     
     # SPECIAL HANDLING: For Section C chunks (any chunk id containing 'sectionC_p1_p2'),
-    # if manual data exists, skip AI extraction and return manual data directly
-    # (AI is only for elaboration in this case)
+    # if manual data exists for principle 1 or principle 2, skip AI extraction and return the
+    # user-provided data directly (AI is used only when manual inputs are absent).
     if 'sectionC_p1_p2' in chunk.get('id', ''):
         result = {}
-        
-        # If manual P1 data provided, use it directly
         if manual_data_cp1:
             print(f"[Section C P1] Using manual data directly (skipping PDF extraction)")
             result["principle1"] = manual_data_cp1
-        
-        # If manual P2 data provided, use it directly  
         if manual_data_cp2:
             print(f"[Section C P2] Using manual data directly (skipping PDF extraction)")
             result["principle2"] = manual_data_cp2
-        
-        # If we have manual data for this chunk, return it without calling AI
         if manual_data_cp1 or manual_data_cp2:
             print(f"[Section C] Returning user-provided data without AI extraction")
             return result
@@ -460,178 +452,10 @@ CONTEXT USAGE INSTRUCTIONS FOR SECTION B:
    - If contradictions exist between user input and PDF, TRUST USER for Policy Matrix, EXTRACT from PDF for Q3-Q12
 """
     
-    # Build context for Section C P1 elaboration if provided
-    if manual_data_cp1 and 'sectionC_p1_p2' in chunk.get('id', ''):
-        cp1_essential = manual_data_cp1.get("essential", {})
-        cp1_q1 = cp1_essential.get("q1_percentageCoveredByTraining", {})
-        
-        # Check if any topicsCovered fields have brief inputs that need elaboration
-        topics_to_elaborate = []
-        for category in ["boardOfDirectors", "kmp", "employees", "workers"]:
-            cat_data = cp1_q1.get(category, {})
-            topics = cat_data.get("topicsCovered", "")
-            if topics and len(topics.strip()) > 0:
-                topics_to_elaborate.append(f"{category}: {topics}")
-        
-        if topics_to_elaborate:
-            manual_data_context += f"""
-
-USER PROVIDED SECTION C P1 DATA (PRINCIPLE 1 - AUTHORITATIVE MANUAL INPUT):
-The user has manually entered Section C Principle 1 data via frontend form.
-This data is AUTHORITATIVE - DO NOT extract Section C P1 from PDF.
-
-User's Complete Section C P1 Data:
-{json.dumps(manual_data_cp1, indent=2)}
-
-CRITICAL INSTRUCTIONS FOR SECTION C P1:
-1. DO NOT EXTRACT Section C P1 from PDF - User has provided all data manually
-2. ONLY TASK: Elaborate/expand the "topicsCovered" field where user entered brief text
-3. ALL OTHER FIELDS: Use exactly as user provided (totalProgrammes, percentageCovered, etc.)
-
-ELABORATION TASK - ONLY FOR topicsCovered FIELD:
-User's Brief Topics to Elaborate:
-{chr(10).join(topics_to_elaborate)}
-
-ELABORATION INSTRUCTIONS:
-1. USER INPUT IS A SEED: Treat user's brief text as a keyword to expand
-2. SEARCH PDF FOR DETAILS: Find comprehensive training information related to:
-   - Ethics and anti-corruption training programs
-   - Code of conduct and business ethics
-   - Conflict of interest policies
-   - Anti-bribery and anti-corruption measures
-   - Transparent business practices
-   - Compliance with NGRBC Principle 1
-
-3. EXPAND BRIEF INPUTS: Transform short keywords into detailed descriptions (50-150 words)
-   Examples:
-   - "Ethics" → "Ethics and anti-corruption training covering NGRBC Principle 1, including conflict of interest policies, code of conduct, transparent business practices, prevention of corruption, and adherence to ethical business standards"
-   - "Compliance" → "Compliance training programs on regulatory requirements, SEBI guidelines, Companies Act provisions, anti-bribery laws, FCPA compliance, and ethical governance practices"
-   - "Safety" → "Safety and workplace ethics training covering occupational health protocols, accident prevention, emergency response procedures, personal protective equipment usage, hazard identification, and creating a safe working environment in line with ethical workplace practices"
-   - "Governance" → "Corporate governance and ethics training covering board responsibilities, fiduciary duties, shareholder rights, transparent disclosure practices, risk management, internal controls, audit committee functions, and adherence to listing regulations and governance codes"
-
-4. WHAT NOT TO CHANGE:
-   - totalProgrammes: Keep user's exact number
-   - percentageCovered: Keep user's exact percentage
-   - All other Section C P1 fields: Use user data as-is
-   - ONLY modify: topicsCovered field (expand brief text to comprehensive description)
-
-5. IF PDF LACKS DETAILS:
-   - Use industry best practices for the topic
-   - Include relevant NGRBC Principle 1 aspects (ethics, transparency, anti-corruption)
-   - Make reasonable inferences based on company sector
-   - Ensure elaboration is professional and comprehensive
-
-6. OUTPUT REQUIREMENT:
-   - Return the complete Section C P1 structure exactly as user provided
-   - ONLY difference: topicsCovered fields are expanded from brief to detailed
-   - All numbers, percentages, and other values remain unchanged
-"""
+    # Section C manual contexts removed (P1/P2 not accepted via API anymore)
     
-    # Build context for Section C P2 elaboration if provided
-    if manual_data_cp2 and 'sectionC_p1_p2' in chunk.get('id', ''):
-        cp2_essential = manual_data_cp2.get("essential", {})
-        cp2_leadership = manual_data_cp2.get("leadership", {})
-        
-        # Check fields that might need elaboration in P2
-        fields_to_elaborate = []
-        
-        # Essential Q1: improvement details
-        q1_rd = cp2_essential.get("q1_rdCapexInvestments", {}).get("rd", {})
-        if q1_rd.get("improvementDetails"):
-            fields_to_elaborate.append(f"R&D Improvement Details: {q1_rd.get('improvementDetails')}")
-        
-        q1_capex = cp2_essential.get("q1_rdCapexInvestments", {}).get("capex", {})
-        if q1_capex.get("improvementDetails"):
-            fields_to_elaborate.append(f"CAPEX Improvement Details: {q1_capex.get('improvementDetails')}")
-        
-        # Essential Q2: sustainable sourcing procedures
-        q2 = cp2_essential.get("q2_sustainableSourcing", {})
-        if q2.get("proceduresInPlace"):
-            fields_to_elaborate.append(f"Sustainable Sourcing Procedures: {q2.get('proceduresInPlace')}")
-        
-        # Essential Q3: reclaim processes
-        q3 = cp2_essential.get("q3_reclaimProcesses", {})
-        for waste_type in ["plastics", "eWaste", "hazardousWaste", "otherWaste"]:
-            waste_data = q3.get(waste_type, {})
-            if waste_data.get("process"):
-                fields_to_elaborate.append(f"{waste_type} Reclaim Process: {waste_data.get('process')}")
-        
-        # Leadership Q1: LCA details
-        if cp2_leadership.get("q1_lcaDetails"):
-            fields_to_elaborate.append(f"LCA Details: {cp2_leadership.get('q1_lcaDetails')}")
-        
-        # Leadership Q2: significant concerns
-        if cp2_leadership.get("q2_significantConcerns"):
-            fields_to_elaborate.append(f"Significant Concerns: {cp2_leadership.get('q2_significantConcerns')}")
-        
-        if fields_to_elaborate:
-            manual_data_context += f"""
-
-USER PROVIDED SECTION C P2 DATA (PRINCIPLE 2 - AUTHORITATIVE MANUAL INPUT):
-The user has manually entered Section C Principle 2 data via frontend form.
-This data is AUTHORITATIVE - DO NOT extract Section C P2 from PDF.
-
-User's Complete Section C P2 Data:
-{json.dumps(manual_data_cp2, indent=2)}
-
-CRITICAL INSTRUCTIONS FOR SECTION C P2:
-1. DO NOT EXTRACT Section C P2 from PDF - User has provided all data manually
-2. ONLY TASK: Elaborate/expand brief text fields where user entered keywords
-3. ALL OTHER FIELDS: Use exactly as user provided (numbers, percentages, etc.)
-
-ELABORATION TASK - FOR THESE FIELDS:
-User's Brief Inputs to Elaborate:
-{chr(10).join(fields_to_elaborate)}
-
-ELABORATION INSTRUCTIONS FOR SECTION C P2:
-1. USER INPUT IS A SEED: Treat brief text as keywords to expand
-2. SEARCH PDF FOR DETAILS: Find comprehensive information about:
-   - Product lifecycle and sustainable design
-   - R&D investments in sustainability
-   - Sustainable sourcing and procurement practices
-   - Waste reclamation and recycling processes
-   - Extended Producer Responsibility (EPR)
-   - Life Cycle Assessment (LCA) methodologies
-   - Environmental concerns and mitigation
-
-3. EXPAND BRIEF INPUTS: Transform short text into detailed descriptions (50-150 words)
-   Examples:
-   - "Recycling" → "Comprehensive recycling processes including collection, segregation, material recovery, and safe disposal systems. Implementation of circular economy principles with partnerships with authorized recyclers, waste-to-resource initiatives, and compliance with EPR regulations for plastic, e-waste, and hazardous materials"
-   - "Sustainable sourcing" → "Sustainable sourcing procedures encompassing supplier ESG assessments, green procurement policies, preference for certified sustainable materials, local sourcing to reduce carbon footprint, supplier code of conduct adherence, and integration of environmental and social criteria in vendor selection and evaluation processes"
-   - "LCA conducted" → "Life Cycle Assessment (LCA) conducted following ISO 14040/14044 standards, covering cradle-to-grave analysis of products including raw material extraction, manufacturing, distribution, use phase, and end-of-life disposal. Assessment includes carbon footprint, water footprint, resource depletion, and environmental impact evaluation across all lifecycle stages"
-
-4. WHAT NOT TO CHANGE:
-   - All numerical values (currentFY, previousFY amounts)
-   - Percentages
-   - Yes/No/Applicable fields
-   - ONLY elaborate: Text description fields that are brief
-
-5. IF PDF LACKS DETAILS:
-   - Use industry best practices for sustainable product lifecycle
-   - Include NGRBC Principle 2 aspects (product sustainability, circularity)
-   - Reference relevant standards (ISO 14001, EPR guidelines)
-   - Ensure elaboration is professional and comprehensive
-
-6. OUTPUT REQUIREMENT:
-   - Return complete Section C P2 structure exactly as user provided
-   - ONLY difference: Brief text fields are expanded to detailed descriptions
-   - All numbers and percentages remain unchanged
-"""
-    
-    # Override prompt for Section C when manual data is provided
+    # Use the original chunk prompt by default
     chunk_prompt = chunk['prompt']
-    if 'sectionC_p1_p2' in chunk.get('id', '') and (manual_data_cp1 or manual_data_cp2):
-        # Replace extraction prompt with elaboration-only prompt
-        chunk_prompt = f"""SPECIAL MODE: ELABORATION ONLY - DO NOT EXTRACT FROM PDF
-
-You are receiving user-provided manual data for Section C Principles.
-Your ONLY task is to return the user's data with elaborated text fields.
-
-DO NOT extract Section C data from the PDF below.
-The PDF is provided ONLY as reference for elaborating brief user inputs.
-
-Return the exact JSON structure provided by the user, with ONLY the specified text fields expanded.
-"""
     
     # Updated prompt as per updates section
     prompt = f"""You are a BRSR (Business Responsibility and Sustainability Reporting) expert with advanced calculation capabilities.
@@ -976,11 +800,11 @@ class SectionBManualData(BaseModel):
 
 @app.post("/api/extract")
 async def extract_brsr_data(
+    request: Request,
     files: List[UploadFile] = File(...),
     sectionAManualData: Optional[str] = Form(None),
     sectionBManualData: Optional[str] = Form(None),
-    sectionCP1ManualData: Optional[str] = Form(None),
-    sectionCP2ManualData: Optional[str] = Form(None)
+    sectionCP1ManualData: Optional[str] = Form(None)
 ):
     """Extract BRSR data from uploaded PDF/Excel files using Gemini with parallel processing.
     Accepts multiple files and processes them in parallel for faster extraction.
@@ -991,6 +815,21 @@ async def extract_brsr_data(
         raise HTTPException(status_code=400, detail="No files uploaded")
     
     print(f"[Files] Received {len(files)} file(s) for extraction")
+    try:
+        form_raw = await request.form()
+        keys = list(form_raw.keys())
+        print(f"[Debug] Raw multipart form fields received: {keys}")
+        # If manual fields are present as strings, show small snippet
+        # Show a short preview of non-file form fields (if any)
+        for key, val in form_raw.items():
+            if key != 'files':
+                try:
+                    val_preview = (val if isinstance(val, str) else str(val))[:300]
+                    print(f"[Debug] {key} preview: {val_preview}")
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"[Debug] Could not read raw form: {e}")
     
     # Validate file types
     for file in files:
@@ -1006,6 +845,24 @@ async def extract_brsr_data(
             print(f"[Manual Data] Received Section A manual inputs: {list(manual_data.keys())}")
         except json.JSONDecodeError as e:
             print(f"[Warning] Could not parse manual Section A data: {e}")
+
+    # Normalize manual Section A data: replace empty strings/None with 'NIL' and ensure numeric fields exist
+    if manual_data:
+        try:
+            manual_data = fill_nil_defaults(manual_data)
+            # Log employee/worker subtotals if present for debugging
+            emp = manual_data.get('employees', {})
+            wk = manual_data.get('workers', {})
+            def _summary(prefix, obj):
+                if not isinstance(obj, dict):
+                    return ''
+                perm = obj.get('permanent', {})
+                other = obj.get('otherThanPermanent', {})
+                return f"{prefix} perm(m={perm.get('male')},f={perm.get('female')},t={perm.get('total')}) oth(m={other.get('male')},f={other.get('female')},t={other.get('total')})"
+            print(f"[Manual Data] Section A employees summary: {_summary('Employees', emp)}")
+            print(f"[Manual Data] Section A workers summary: {_summary('Workers', wk)}")
+        except Exception as e:
+            print(f"[Warning] fill_nil_defaults failed for Section A manual data: {e}")
     
     # Parse manual Section B data if provided
     manual_data_b = None
@@ -1015,24 +872,26 @@ async def extract_brsr_data(
             print(f"[Manual Data] Received Section B manual inputs: {list(manual_data_b.keys())}")
         except json.JSONDecodeError as e:
             print(f"[Warning] Could not parse manual Section B data: {e}")
-    
+
     # Parse manual Section C P1 data if provided
     manual_data_cp1 = None
     if sectionCP1ManualData:
         try:
             manual_data_cp1 = json.loads(sectionCP1ManualData)
-            print(f"[Manual Data] Received Section C P1 manual inputs")
+            # Apply NIL defaults so empty strings become 'NIL' for persistence
+            try:
+                manual_data_cp1 = fill_nil_defaults(manual_data_cp1)
+                print("[Manual Data] Section C P1 after fill_nil_defaults applied")
+            except Exception as e:
+                print(f"[Warning] fill_nil_defaults failed for CP1: {e}")
+            top_keys = list(manual_data_cp1.keys()) if isinstance(manual_data_cp1, dict) else []
+            print(f"[Manual Data] Received Section C P1 manual inputs - top keys: {top_keys}")
+            snippet = json.dumps(manual_data_cp1, indent=2)[:1000]
+            print(f"[Manual Data] Section C P1 (snippet): {snippet}")
         except json.JSONDecodeError as e:
             print(f"[Warning] Could not parse manual Section C P1 data: {e}")
     
-    # Parse manual Section C P2 data if provided
-    manual_data_cp2 = None
-    if sectionCP2ManualData:
-        try:
-            manual_data_cp2 = json.loads(sectionCP2ManualData)
-            print(f"[Manual Data] Received Section C P2 manual inputs")
-        except json.JSONDecodeError as e:
-            print(f"[Warning] Could not parse manual Section C P2 data: {e}")
+    # Section C manual inputs are accepted for Principle 1 (sectionCP1ManualData).
     
     # Extract text from all files and combine
     combined_text = ""
@@ -1058,7 +917,10 @@ async def extract_brsr_data(
     # Use combined text for extraction
     text = combined_text
     
-    if len(text) < 100:
+    # If combined extracted text is very small, allow request to proceed when the user
+    # provided manual Section A data (manual inputs should be accepted even for small PDFs).
+    # Also allow when manual Section C P1 data is provided (user intends to submit manual P1)
+    if len(text) < 100 and not manual_data and not manual_data_cp1:
         raise HTTPException(status_code=400, detail="Could not extract sufficient text from file")
     
     # Create output directory for JSON files
@@ -1068,30 +930,7 @@ async def extract_brsr_data(
     os.makedirs(output_dir, exist_ok=True)
     print(f"[Output] Saving extraction results to: {output_dir}")
     
-    # Apply NIL defaults to manual Section C data so empty fields are preserved as 'NIL'
-    if manual_data_cp1:
-        try:
-            manual_data_cp1 = fill_nil_defaults(manual_data_cp1)
-            print("[Manual Data] Section C P1 after fill_nil_defaults applied")
-        except Exception as e:
-            print(f"[Warning] fill_nil_defaults failed for CP1: {e}")
-
-    if manual_data_cp2:
-        try:
-            manual_data_cp2 = fill_nil_defaults(manual_data_cp2)
-            print("[Manual Data] Section C P2 after fill_nil_defaults applied")
-        except Exception as e:
-            print(f"[Warning] fill_nil_defaults failed for CP2: {e}")
-
     chunks = get_extraction_chunks()
-
-    # If user provided manual data for Principle 1 or Principle 2, skip the AI extraction chunk for those
-    # (the chunk id used by the extractor is 'sectionC_p1_p2')
-    if manual_data_cp1 or manual_data_cp2:
-        original_count = len(chunks)
-        # Remove any chunk whose id refers to Section C P1/P2 (including variants like sectionC_p1_p2_p3)
-        chunks = [c for c in chunks if 'sectionC_p1_p2' not in c.get('id', '')]
-        print(f"[Manual Override] Removed sectionC_p1_p2 chunk(s) (skipped AI). Chunks {original_count} -> {len(chunks)}")
     all_chunk_results = []
     failed_chunks = []
     
@@ -1103,7 +942,7 @@ async def extract_brsr_data(
         async def process_chunk_wrapper(i, chunk):
             try:
                 print(f"[Started] Chunk {i+1}/{len(chunks)}: {chunk['name']}")
-                chunk_data = await extract_chunk_with_gemini(text, chunk, manual_data, manual_data_b, manual_data_cp1, manual_data_cp2)
+                chunk_data = await extract_chunk_with_gemini(text, chunk, manual_data, manual_data_b, manual_data_cp1, None)
                 
                 # Save individual chunk result
                 chunk_file = f"{output_dir}/chunk_{i+1}_{chunk['id']}.json"
@@ -1137,7 +976,7 @@ async def extract_brsr_data(
             print(f"\n[Progress] Processing chunk {i+1}/{len(chunks)}: {chunk['name']}")
             
             try:
-                chunk_data = await extract_chunk_with_gemini(text, chunk, manual_data, manual_data_b, manual_data_cp1, manual_data_cp2)
+                chunk_data = await extract_chunk_with_gemini(text, chunk, manual_data, manual_data_b, manual_data_cp1, None)
                 all_chunk_results.append((chunk["id"], chunk_data))
                 
                 # Save individual chunk result to JSON file
@@ -1189,7 +1028,7 @@ async def extract_brsr_data(
                     "female": emp_data.get("permanent", {}).get("female", 0),
                     "total": emp_data.get("permanent", {}).get("total", 0)
                 },
-                "other": {
+                "otherThanPermanent": {
                     "male": emp_data.get("otherThanPermanent", {}).get("male", 0),
                     "female": emp_data.get("otherThanPermanent", {}).get("female", 0),
                     "total": emp_data.get("otherThanPermanent", {}).get("total", 0)
@@ -1206,7 +1045,7 @@ async def extract_brsr_data(
                     "female": worker_data.get("permanent", {}).get("female", 0),
                     "total": worker_data.get("permanent", {}).get("total", 0)
                 },
-                "other": {
+                "otherThanPermanent": {
                     "male": worker_data.get("otherThanPermanent", {}).get("male", 0),
                     "female": worker_data.get("otherThanPermanent", {}).get("female", 0),
                     "total": worker_data.get("otherThanPermanent", {}).get("total", 0)
@@ -1327,82 +1166,17 @@ async def extract_brsr_data(
                     print(f"[Merge] Using user noPolicyReasons.{sub} where provided")
         
         print(f"[Merge] Section B user data successfully merged - user inputs take precedence over AI")
-    
-    # Merge manual Section C P1 data - USER DATA ALWAYS WINS (takes precedence over AI)
+
+    # Merge manual Section C P1 data - USER DATA ALWAYS WINS (force overwrite AI)
     if manual_data_cp1:
-        print(f"[Merge] Merging manual Section C P1 data (user data takes precedence)...")
+        print("[Merge] Overwriting Section C P1 with user-provided data (user data authoritative)")
         if "sectionC" not in extracted_data:
             extracted_data["sectionC"] = {}
-        if "principle1" not in extracted_data["sectionC"]:
-            extracted_data["sectionC"]["principle1"] = {}
-        
-        # Essential indicators
-        if "essential" in manual_data_cp1:
-            if "essential" not in extracted_data["sectionC"]["principle1"]:
-                extracted_data["sectionC"]["principle1"]["essential"] = {}
-            
-            ess = manual_data_cp1["essential"]
-            
-            # Recursively merge all essential fields
-            for key, value in ess.items():
-                if value:  # Only merge if value is provided
-                    extracted_data["sectionC"]["principle1"]["essential"][key] = value
-            
-            print(f"[Merge] Using user Section C P1 essential data")
-        
-        # Leadership indicators
-        if "leadership" in manual_data_cp1:
-            if "leadership" not in extracted_data["sectionC"]["principle1"]:
-                extracted_data["sectionC"]["principle1"]["leadership"] = {}
-            
-            lead = manual_data_cp1["leadership"]
-            
-            # Recursively merge all leadership fields
-            for key, value in lead.items():
-                if value:  # Only merge if value is provided
-                    extracted_data["sectionC"]["principle1"]["leadership"][key] = value
-            
-            print(f"[Merge] Using user Section C P1 leadership data")
-        
-        print(f"[Merge] Section C P1 user data successfully merged")
-    
-    # Merge manual Section C P2 data - USER DATA ALWAYS WINS (takes precedence over AI)
-    if manual_data_cp2:
-        print(f"[Merge] Merging manual Section C P2 data (user data takes precedence)...")
-        if "sectionC" not in extracted_data:
-            extracted_data["sectionC"] = {}
-        if "principle2" not in extracted_data["sectionC"]:
-            extracted_data["sectionC"]["principle2"] = {}
-        
-        # Essential indicators
-        if "essential" in manual_data_cp2:
-            if "essential" not in extracted_data["sectionC"]["principle2"]:
-                extracted_data["sectionC"]["principle2"]["essential"] = {}
-            
-            ess = manual_data_cp2["essential"]
-            
-            # Recursively merge all essential fields
-            for key, value in ess.items():
-                if value:  # Only merge if value is provided
-                    extracted_data["sectionC"]["principle2"]["essential"][key] = value
-            
-            print(f"[Merge] Using user Section C P2 essential data")
-        
-        # Leadership indicators
-        if "leadership" in manual_data_cp2:
-            if "leadership" not in extracted_data["sectionC"]["principle2"]:
-                extracted_data["sectionC"]["principle2"]["leadership"] = {}
-            
-            lead = manual_data_cp2["leadership"]
-            
-            # Recursively merge all leadership fields
-            for key, value in lead.items():
-                if value:  # Only merge if value is provided
-                    extracted_data["sectionC"]["principle2"]["leadership"][key] = value
-            
-            print(f"[Merge] Using user Section C P2 leadership data")
-        
-        print(f"[Merge] Section C P2 user data successfully merged")
+        # Assign user object directly to avoid AI overwrites
+        extracted_data["sectionC"]["principle1"] = manual_data_cp1
+        print("[Merge] Section C P1 replaced with user data")
+
+    # Section C manual merging handled above (P1). CP2 not supported yet.
     
     # Save merged final result
     final_file = f"{output_dir}/final_merged_data.json"
