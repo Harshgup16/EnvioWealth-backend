@@ -55,9 +55,23 @@ with open(pdf_path, 'rb') as f:
             "otherThanPermanent": {"male": 100, "female": 50, "total": 150}
         }
     }
+    p4 = {
+        "essential": {
+            "q1_stakeholderIdentification": "Test stakeholders: investors, employees, communities",
+            "q2_stakeholderEngagement": [{"stakeholderGroup": "Investors","vulnerableMarginalized": "No","channels": "AGM, Reports","frequency": "As & when required","purpose": "Performance"}]
+        },
+        "leadership": {
+            "q1_boardConsultation": "Board committees review stakeholder matters regularly.",
+            "q2_stakeholderConsultationUsed": "Yes",
+            "q2_details": {"a": "Env policy consults", "b": "Social impact consults", "c": "Supply chain consults"},
+            "q3_vulnerableEngagement": [{"vulnerableGroup": "Underprivileged","concerns": "Healthcare","actionTaken": "Health camps"}]
+        }
+    }
+
     data = {
         'sectionAManualData': json.dumps(section_a),
-        'sectionCP1ManualData': json.dumps(p1)
+        'sectionCP1ManualData': json.dumps(p1),
+        'sectionCP4ManualData': json.dumps(p4)
     }
     print(f"Posting to {url} with file {pdf_path} and manual Section A keys: {list(data.keys())}")
     r = requests.post(url, files=files, data=data)

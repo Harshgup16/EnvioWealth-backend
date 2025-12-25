@@ -261,18 +261,18 @@ def get_extraction_chunks() -> List[Dict[str, Any]]:
     secA = create_sectionA_agent()["prompt"]
     secB = create_sectionB_agent()["prompt"]
     p1p2 = create_principles_1_2_agent()["prompt"]
-    # p3p4 = create_principles_3_4_agent()["prompt"]
-    # p5p6 = create_principles_5_6_agent()["prompt"]
-    # p7p8p9 = create_principles_7_8_9_agent()["prompt"]
+    p3p4 = create_principles_3_4_agent()["prompt"]
+    p5p6 = create_principles_5_6_agent()["prompt"]
+    p7p8p9 = create_principles_7_8_9_agent()["prompt"]
 
-    # TESTING MODE: Sections A, B, C P1-P2 enabled
+    # TESTING MODE: Sections A, B, C P1-P7 enabled
     return [
         {"id": "sectionA_complete", "name": "Section A: Complete Company Information", "delay_seconds": 1, "prompt": secA},
         {"id": "sectionB", "name": "Section B: Policies and Governance", "delay_seconds": 1, "prompt": secB},
         {"id": "sectionC_p1_p2", "name": "Section C: Principles 1-2", "delay_seconds": 1, "prompt": p1p2},
-        # {"id": "sectionC_p3_p4", "name": "Section C: Principles 3-4", "delay_seconds": 1, "prompt": p3p4},
-        # {"id": "sectionC_p5_p6", "name": "Section C: Principles 5-6", "delay_seconds": 1, "prompt": p5p6},
-        # {"id": "sectionC_p7_p8_p9", "name": "Section C: Principles 7-9", "delay_seconds": 1, "prompt": p7p8p9},
+        {"id": "sectionC_p3_p4", "name": "Section C: Principles 3-4", "delay_seconds": 1, "prompt": p3p4},
+        {"id": "sectionC_p5_p6", "name": "Section C: Principles 5-6", "delay_seconds": 1, "prompt": p5p6},
+        {"id": "sectionC_p7_p8_p9", "name": "Section C: Principles 7-9", "delay_seconds": 1, "prompt": p7p8p9},
     ]
 
 
@@ -333,7 +333,7 @@ if __name__ == '__main__':
     pass
 
 
-async def extract_chunk_with_gemini(text: str, chunk: Dict[str, Any], manual_data: Dict[str, Any] = None, manual_data_b: Dict[str, Any] = None, manual_data_cp1: Dict[str, Any] = None, manual_data_cp2: Dict[str, Any] = None) -> Dict[str, Any]:
+async def extract_chunk_with_gemini(text: str, chunk: Dict[str, Any], manual_data: Dict[str, Any] = None, manual_data_b: Dict[str, Any] = None, manual_data_cp1: Dict[str, Any] = None, manual_data_cp2: Dict[str, Any] = None, manual_data_cp3: Dict[str, Any] = None, manual_data_cp4: Dict[str, Any] = None, manual_data_cp5: Dict[str, Any] = None, manual_data_cp6: Dict[str, Any] = None, manual_data_cp7: Dict[str, Any] = None, manual_data_cp8: Dict[str, Any] = None, manual_data_cp9: Dict[str, Any] = None) -> Dict[str, Any]:
     """Extract data using Gemini API with rate limiting, retry logic, and JSON repair.
     
     Args:
@@ -343,11 +343,11 @@ async def extract_chunk_with_gemini(text: str, chunk: Dict[str, Any], manual_dat
         manual_data_b: Optional manual Section B data (Policy Matrix + policyWebLink) that AI can use as context
     """
     
-    # SPECIAL HANDLING: For Section C chunks (any chunk id containing 'sectionC_p1_p2'),
-    # if manual data exists for principle 1 or principle 2, skip AI extraction and return the
-    # user-provided data directly (AI is used only when manual inputs are absent).
+    # SPECIAL HANDLING: For Section C chunks
+    # - For chunk id containing 'sectionC_p1_p2': if manual data exists for principle 1 or 2, return them directly
+    # - For chunk id containing 'sectionC_p3_p4': if manual data exists for principle 3 or 4, return them directly
+    result = {}
     if 'sectionC_p1_p2' in chunk.get('id', ''):
-        result = {}
         if manual_data_cp1:
             print(f"[Section C P1] Using manual data directly (skipping PDF extraction)")
             result["principle1"] = manual_data_cp1
@@ -357,6 +357,43 @@ async def extract_chunk_with_gemini(text: str, chunk: Dict[str, Any], manual_dat
         if manual_data_cp1 or manual_data_cp2:
             print(f"[Section C] Returning user-provided data without AI extraction")
             return result
+
+    if 'sectionC_p3_p4' in chunk.get('id', ''):
+        if manual_data_cp3:
+            print(f"[Section C P3] Using manual data directly (skipping PDF extraction)")
+            result["principle3"] = manual_data_cp3
+        if manual_data_cp4:
+            print(f"[Section C P4] Using manual data directly (skipping PDF extraction)")
+            result["principle4"] = manual_data_cp4
+        if manual_data_cp3 or manual_data_cp4:
+            print(f"[Section C] Returning user-provided data without AI extraction")
+            return result
+
+    if 'sectionC_p5_p6' in chunk.get('id', ''):
+        if manual_data_cp5:
+            print(f"[Section C P5] Using manual data directly (skipping PDF extraction)")
+            result["principle5"] = manual_data_cp5
+        if manual_data_cp6:
+            print(f"[Section C P6] Using manual data directly (skipping PDF extraction)")
+            result["principle6"] = manual_data_cp6
+        if manual_data_cp5 or manual_data_cp6:
+            print(f"[Section C] Returning user-provided P5/P6 data without AI extraction")
+            return result
+
+    if 'sectionC_p7_p8_p9' in chunk.get('id', ''):
+        if manual_data_cp7:
+            print(f"[Section C P7] Using manual data directly (skipping PDF extraction)")
+            result["principle7"] = manual_data_cp7
+        if manual_data_cp8:
+            print(f"[Section C P8] Using manual data directly (skipping PDF extraction)")
+            result["principle8"] = manual_data_cp8
+        if manual_data_cp9:
+            print(f"[Section C P9] Using manual data directly (skipping PDF extraction)")
+            result["principle9"] = manual_data_cp9
+        if manual_data_cp7 or manual_data_cp8 or manual_data_cp9:
+            print(f"[Section C] Returning user-provided P7/P8/P9 data without AI extraction")
+            return result
+
     
     if not GOOGLE_API_KEY or not genai:
         raise HTTPException(status_code=500, detail="Gemini API not configured. Set GOOGLE_API_KEY.")
@@ -804,7 +841,15 @@ async def extract_brsr_data(
     files: List[UploadFile] = File(...),
     sectionAManualData: Optional[str] = Form(None),
     sectionBManualData: Optional[str] = Form(None),
-    sectionCP1ManualData: Optional[str] = Form(None)
+    sectionCP1ManualData: Optional[str] = Form(None),
+    sectionCP2ManualData: Optional[str] = Form(None),
+    sectionCP3ManualData: Optional[str] = Form(None),
+    sectionCP4ManualData: Optional[str] = Form(None),
+    sectionCP5ManualData: Optional[str] = Form(None),
+    sectionCP6ManualData: Optional[str] = Form(None),
+    sectionCP7ManualData: Optional[str] = Form(None),
+    sectionCP8ManualData: Optional[str] = Form(None),
+    sectionCP9ManualData: Optional[str] = Form(None)
 ):
     """Extract BRSR data from uploaded PDF/Excel files using Gemini with parallel processing.
     Accepts multiple files and processes them in parallel for faster extraction.
@@ -891,7 +936,143 @@ async def extract_brsr_data(
         except json.JSONDecodeError as e:
             print(f"[Warning] Could not parse manual Section C P1 data: {e}")
     
-    # Section C manual inputs are accepted for Principle 1 (sectionCP1ManualData).
+    # Parse manual Section C P2 data if provided
+    manual_data_cp2 = None
+    if sectionCP2ManualData:
+        try:
+            manual_data_cp2 = json.loads(sectionCP2ManualData)
+            try:
+                manual_data_cp2 = fill_nil_defaults(manual_data_cp2)
+                print("[Manual Data] Section C P2 after fill_nil_defaults applied")
+            except Exception as e:
+                print(f"[Warning] fill_nil_defaults failed for CP2: {e}")
+            top_keys = list(manual_data_cp2.keys()) if isinstance(manual_data_cp2, dict) else []
+            print(f"[Manual Data] Received Section C P2 manual inputs - top keys: {top_keys}")
+            snippet = json.dumps(manual_data_cp2, indent=2)[:1000]
+            print(f"[Manual Data] Section C P2 (snippet): {snippet}")
+        except json.JSONDecodeError as e:
+            print(f"[Warning] Could not parse manual Section C P2 data: {e}")
+    
+    # Parse manual Section C P3 data if provided
+    manual_data_cp3 = None
+    if sectionCP3ManualData:
+        try:
+            manual_data_cp3 = json.loads(sectionCP3ManualData)
+            try:
+                manual_data_cp3 = fill_nil_defaults(manual_data_cp3)
+                print("[Manual Data] Section C P3 after fill_nil_defaults applied")
+            except Exception as e:
+                print(f"[Warning] fill_nil_defaults failed for CP3: {e}")
+            top_keys = list(manual_data_cp3.keys()) if isinstance(manual_data_cp3, dict) else []
+            print(f"[Manual Data] Received Section C P3 manual inputs - top keys: {top_keys}")
+            snippet = json.dumps(manual_data_cp3, indent=2)[:1000]
+            print(f"[Manual Data] Section C P3 (snippet): {snippet}")
+        except json.JSONDecodeError as e:
+            print(f"[Warning] Could not parse manual Section C P3 data: {e}")
+
+    # Parse manual Section C P4 data if provided
+    manual_data_cp4 = None
+    if sectionCP4ManualData:
+        try:
+            manual_data_cp4 = json.loads(sectionCP4ManualData)
+            try:
+                manual_data_cp4 = fill_nil_defaults(manual_data_cp4)
+                print("[Manual Data] Section C P4 after fill_nil_defaults applied")
+            except Exception as e:
+                print(f"[Warning] fill_nil_defaults failed for CP4: {e}")
+            top_keys = list(manual_data_cp4.keys()) if isinstance(manual_data_cp4, dict) else []
+            print(f"[Manual Data] Received Section C P4 manual inputs - top keys: {top_keys}")
+            snippet = json.dumps(manual_data_cp4, indent=2)[:1000]
+            print(f"[Manual Data] Section C P4 (snippet): {snippet}")
+        except json.JSONDecodeError as e:
+            print(f"[Warning] Could not parse manual Section C P4 data: {e}")
+
+    # Parse manual Section C P5 data if provided
+    manual_data_cp5 = None
+    if sectionCP5ManualData:
+        try:
+            manual_data_cp5 = json.loads(sectionCP5ManualData)
+            try:
+                manual_data_cp5 = fill_nil_defaults(manual_data_cp5)
+                print("[Manual Data] Section C P5 after fill_nil_defaults applied")
+            except Exception as e:
+                print(f"[Warning] fill_nil_defaults failed for CP5: {e}")
+            top_keys = list(manual_data_cp5.keys()) if isinstance(manual_data_cp5, dict) else []
+            print(f"[Manual Data] Received Section C P5 manual inputs - top keys: {top_keys}")
+            snippet = json.dumps(manual_data_cp5, indent=2)[:1000]
+            print(f"[Manual Data] Section C P5 (snippet): {snippet}")
+        except json.JSONDecodeError as e:
+            print(f"[Warning] Could not parse manual Section C P5 data: {e}")
+
+    # Parse manual Section C P6 data if provided
+    manual_data_cp6 = None
+    if sectionCP6ManualData:
+        try:
+            manual_data_cp6 = json.loads(sectionCP6ManualData)
+            try:
+                manual_data_cp6 = fill_nil_defaults(manual_data_cp6)
+                print("[Manual Data] Section C P6 after fill_nil_defaults applied")
+            except Exception as e:
+                print(f"[Warning] fill_nil_defaults failed for CP6: {e}")
+            top_keys = list(manual_data_cp6.keys()) if isinstance(manual_data_cp6, dict) else []
+            print(f"[Manual Data] Received Section C P6 manual inputs - top keys: {top_keys}")
+            snippet = json.dumps(manual_data_cp6, indent=2)[:1000]
+            print(f"[Manual Data] Section C P6 (snippet): {snippet}")
+        except json.JSONDecodeError as e:
+            print(f"[Warning] Could not parse manual Section C P6 data: {e}")
+
+    # Parse manual Section C P7 data if provided
+    manual_data_cp7 = None
+    if sectionCP7ManualData:
+        try:
+            manual_data_cp7 = json.loads(sectionCP7ManualData)
+            try:
+                manual_data_cp7 = fill_nil_defaults(manual_data_cp7)
+                print("[Manual Data] Section C P7 after fill_nil_defaults applied")
+            except Exception as e:
+                print(f"[Warning] fill_nil_defaults failed for CP7: {e}")
+            top_keys = list(manual_data_cp7.keys()) if isinstance(manual_data_cp7, dict) else []
+            print(f"[Manual Data] Received Section C P7 manual inputs - top keys: {top_keys}")
+            snippet = json.dumps(manual_data_cp7, indent=2)[:1000]
+            print(f"[Manual Data] Section C P7 (snippet): {snippet}")
+        except json.JSONDecodeError as e:
+            print(f"[Warning] Could not parse manual Section C P7 data: {e}")
+
+    # Parse manual Section C P8 data if provided
+    manual_data_cp8 = None
+    if sectionCP8ManualData:
+        try:
+            manual_data_cp8 = json.loads(sectionCP8ManualData)
+            try:
+                manual_data_cp8 = fill_nil_defaults(manual_data_cp8)
+                print("[Manual Data] Section C P8 after fill_nil_defaults applied")
+            except Exception as e:
+                print(f"[Warning] fill_nil_defaults failed for CP8: {e}")
+            top_keys = list(manual_data_cp8.keys()) if isinstance(manual_data_cp8, dict) else []
+            print(f"[Manual Data] Received Section C P8 manual inputs - top keys: {top_keys}")
+            snippet = json.dumps(manual_data_cp8, indent=2)[:1000]
+            print(f"[Manual Data] Section C P8 (snippet): {snippet}")
+        except json.JSONDecodeError as e:
+            print(f"[Warning] Could not parse manual Section C P8 data: {e}")
+
+    # Parse manual Section C P9 data if provided
+    manual_data_cp9 = None
+    if sectionCP9ManualData:
+        try:
+            manual_data_cp9 = json.loads(sectionCP9ManualData)
+            try:
+                manual_data_cp9 = fill_nil_defaults(manual_data_cp9)
+                print("[Manual Data] Section C P9 after fill_nil_defaults applied")
+            except Exception as e:
+                print(f"[Warning] fill_nil_defaults failed for CP9: {e}")
+            top_keys = list(manual_data_cp9.keys()) if isinstance(manual_data_cp9, dict) else []
+            print(f"[Manual Data] Received Section C P9 manual inputs - top keys: {top_keys}")
+            snippet = json.dumps(manual_data_cp9, indent=2)[:1000]
+            print(f"[Manual Data] Section C P9 (snippet): {snippet}")
+        except json.JSONDecodeError as e:
+            print(f"[Warning] Could not parse manual Section C P9 data: {e}")
+
+    # Section C manual inputs are accepted for Principle 1..6 (sectionCP1ManualData, sectionCP2ManualData, sectionCP3ManualData, sectionCP4ManualData, sectionCP5ManualData, sectionCP6ManualData).
     
     # Extract text from all files and combine
     combined_text = ""
@@ -920,7 +1101,7 @@ async def extract_brsr_data(
     # If combined extracted text is very small, allow request to proceed when the user
     # provided manual Section A data (manual inputs should be accepted even for small PDFs).
     # Also allow when manual Section C P1 data is provided (user intends to submit manual P1)
-    if len(text) < 100 and not manual_data and not manual_data_cp1:
+    if len(text) < 100 and not manual_data and not manual_data_cp1 and not manual_data_cp2 and not manual_data_cp3 and not manual_data_cp4 and not manual_data_cp7 and not manual_data_cp8 and not manual_data_cp9:
         raise HTTPException(status_code=400, detail="Could not extract sufficient text from file")
     
     # Create output directory for JSON files
@@ -942,7 +1123,7 @@ async def extract_brsr_data(
         async def process_chunk_wrapper(i, chunk):
             try:
                 print(f"[Started] Chunk {i+1}/{len(chunks)}: {chunk['name']}")
-                chunk_data = await extract_chunk_with_gemini(text, chunk, manual_data, manual_data_b, manual_data_cp1, None)
+                chunk_data = await extract_chunk_with_gemini(text, chunk, manual_data, manual_data_b, manual_data_cp1, manual_data_cp2, manual_data_cp3, manual_data_cp4, manual_data_cp5, manual_data_cp6, manual_data_cp7, manual_data_cp8, manual_data_cp9)
                 
                 # Save individual chunk result
                 chunk_file = f"{output_dir}/chunk_{i+1}_{chunk['id']}.json"
@@ -976,7 +1157,7 @@ async def extract_brsr_data(
             print(f"\n[Progress] Processing chunk {i+1}/{len(chunks)}: {chunk['name']}")
             
             try:
-                chunk_data = await extract_chunk_with_gemini(text, chunk, manual_data, manual_data_b, manual_data_cp1, None)
+                chunk_data = await extract_chunk_with_gemini(text, chunk, manual_data, manual_data_b, manual_data_cp1, manual_data_cp2, manual_data_cp3, manual_data_cp4, manual_data_cp5, manual_data_cp6, manual_data_cp7, manual_data_cp8, manual_data_cp9)
                 all_chunk_results.append((chunk["id"], chunk_data))
                 
                 # Save individual chunk result to JSON file
@@ -1176,7 +1357,69 @@ async def extract_brsr_data(
         extracted_data["sectionC"]["principle1"] = manual_data_cp1
         print("[Merge] Section C P1 replaced with user data")
 
-    # Section C manual merging handled above (P1). CP2 not supported yet.
+    # Merge manual Section C P2 data - USER DATA ALWAYS WINS (force overwrite AI)
+    if manual_data_cp2:
+        print("[Merge] Overwriting Section C P2 with user-provided data (user data authoritative)")
+        if "sectionC" not in extracted_data:
+            extracted_data["sectionC"] = {}
+        extracted_data["sectionC"]["principle2"] = manual_data_cp2
+        print("[Merge] Section C P2 replaced with user data")
+
+    # Merge manual Section C P3 data - USER DATA ALWAYS WINS (force overwrite AI)
+    if manual_data_cp3:
+        print("[Merge] Overwriting Section C P3 with user-provided data (user data authoritative)")
+        if "sectionC" not in extracted_data:
+            extracted_data["sectionC"] = {}
+        extracted_data["sectionC"]["principle3"] = manual_data_cp3
+        print("[Merge] Section C P3 replaced with user data")
+
+    # Merge manual Section C P4 data - USER DATA ALWAYS WINS (force overwrite AI)
+    if manual_data_cp4:
+        print("[Merge] Overwriting Section C P4 with user-provided data (user data authoritative)")
+        if "sectionC" not in extracted_data:
+            extracted_data["sectionC"] = {}
+        extracted_data["sectionC"]["principle4"] = manual_data_cp4
+        print("[Merge] Section C P4 replaced with user data")
+
+    # Merge manual Section C P5 data - USER DATA ALWAYS WINS (force overwrite AI)
+    if manual_data_cp5:
+        print("[Merge] Overwriting Section C P5 with user-provided data (user data authoritative)")
+        if "sectionC" not in extracted_data:
+            extracted_data["sectionC"] = {}
+        extracted_data["sectionC"]["principle5"] = manual_data_cp5
+        print("[Merge] Section C P5 replaced with user data")
+
+    # Merge manual Section C P6 data - USER DATA ALWAYS WINS (force overwrite AI)
+    if manual_data_cp6:
+        print("[Merge] Overwriting Section C P6 with user-provided data (user data authoritative)")
+        if "sectionC" not in extracted_data:
+            extracted_data["sectionC"] = {}
+        extracted_data["sectionC"]["principle6"] = manual_data_cp6
+        print("[Merge] Section C P6 replaced with user data")
+
+    # Merge manual Section C P7 data - USER DATA ALWAYS WINS (force overwrite AI)
+    if manual_data_cp7:
+        print("[Merge] Overwriting Section C P7 with user-provided data (user data authoritative)")
+        if "sectionC" not in extracted_data:
+            extracted_data["sectionC"] = {}
+        extracted_data["sectionC"]["principle7"] = manual_data_cp7
+        print("[Merge] Section C P7 replaced with user data")
+
+    # Merge manual Section C P8 data - USER DATA ALWAYS WINS (force overwrite AI)
+    if manual_data_cp8:
+        print("[Merge] Overwriting Section C P8 with user-provided data (user data authoritative)")
+        if "sectionC" not in extracted_data:
+            extracted_data["sectionC"] = {}
+        extracted_data["sectionC"]["principle8"] = manual_data_cp8
+        print("[Merge] Section C P8 replaced with user data")
+
+    # Merge manual Section C P9 data - USER DATA ALWAYS WINS (force overwrite AI)
+    if manual_data_cp9:
+        print("[Merge] Overwriting Section C P9 with user-provided data (user data authoritative)")
+        if "sectionC" not in extracted_data:
+            extracted_data["sectionC"] = {}
+        extracted_data["sectionC"]["principle9"] = manual_data_cp9
+        print("[Merge] Section C P9 replaced with user data")
     
     # Save merged final result
     final_file = f"{output_dir}/final_merged_data.json"
